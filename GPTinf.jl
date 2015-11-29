@@ -1,4 +1,4 @@
-module GPTinf
+@everywhere module GPTinf
 
 using Distributions
 
@@ -361,8 +361,8 @@ function GPNHT_SGLDERM(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::In
     # maxepoch is the number of sweeps through whole dataset
 
     n,D,N=size(phi)
-    numbatches=int(ceil(N/m))
-    sigma_w=1;
+    numbatches=round(ceil(N/m))
+    sigma_w=1/Q;
 
     # initialise w,U^(k)
     w_store=Array(Float64,Q,maxepoch*numbatches)
