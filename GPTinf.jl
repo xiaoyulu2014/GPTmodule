@@ -2,9 +2,8 @@ module GPTinf
 
 using Distributions
 
-export datawhitening,feature,samplenz,pred,RMSE, GPTgibbs, GPTSGLD, RMSESGLD
+export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM
 
-# centre and normalise data X so that each col has sd=1
 function datawhitening(X::Array)
     for i = 1:size(X,2)
         X[:,i] = (X[:,i] - mean(X[:,i]))/std(X[:,i])
@@ -42,7 +41,32 @@ function samplenz(r::Integer,D::Integer,Q::Integer,seed::Integer)
     return I
 end
 
+
+function proj(U::Array,V::Array)
+    return V-U*(U'*V+V'*U)/2
+end
+
+# define geod for Stiefel manifold
+function geod(U::Array,mom::Array,t::Real)
+    n,r=size(U)
+    A=U'*mom
+    temp=[A -mom'*mom;eye(r) A]
+    E=expm(t*temp) #can become NaN when temp too large. Return 0 in this case
+    if sum(isnan(E))>0
+        return zeros(n,r)
+    else
+        tmp=[U mom]*E[:,1:r]*expm(-t*A)
+        #ensure that tmp has cols of unit norm
+        normconst=Array(Float64,1,r);
+        for l=1:r
+    	    normconst[1,l]=norm(tmp[:,l])
+        end
+        return tmp./repmat(normconst,n,1)
+    end
+end
+
 #compute <phi^(k)(x_i),U^(k)_{.l}> for all k,l,batch
+
 function phidotU(U::Array,phi::Array)
     n,D,data_size=size(phi)
     r=size(U,2)
@@ -58,6 +82,7 @@ function phidotU(U::Array,phi::Array)
 end
 
 #compute V st V[q,i]=prod_{k=1 to D}(temp[k,I[q,k],i])
+
 function computeV(temp::Array,I::Array)
     Q,D=size(I);
     data_size=size(temp,3)
@@ -73,6 +98,7 @@ function computeV(temp::Array,I::Array)
 end
 
 #compute predictions fhat from V,w
+
 function computefhat(V::Array,w::Array)
     data_size=size(V,2)
     fhat=Array(Float64,data_size)
@@ -83,6 +109,7 @@ function computefhat(V::Array,w::Array)
 end
 
 #compute predictions from w,U,I
+
 function pred(w::Array,U::Array,I::Array,phitest::Array)
 
     # compute <phi^(k)(x_i),U^(k)_{.l}> for all k,l,test and store in temp
@@ -201,45 +228,6 @@ function GPTgibbs(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::Integer
     return w_store,U_store
 end
 
-function phidotU(U::Array,phi::Array)
-    n,D,data_size=size(phi)
-    r=size(U,2)
-    temp=Array(Float64,D,r,data_size)
-    for i=1:data_size
-        for l=1:r
-            for k=1:D
-		temp[k,l,i]=dot(phi[:,k,i],U[:,l,k])
-	    end
-        end
-    end
-    return temp
-end
-
-#compute V st V[q,i]=prod_{k=1 to D}(temp[k,I[q,k],i])
-function computeV(temp::Array,I::Array)
-    Q,D=size(I);
-    data_size=size(temp,3)
-    V=ones(Q,data_size)
-    for i=1:data_size
-        for q=1:Q
-	    for k=1:D
-		V[q,i]*=temp[k,I[q,k],i];
-	    end
-        end
-    end
-    return V
-end
-
-#compute predictions fhat from V,w
-function computefhat(V::Array,w::Array)
-    data_size=size(V,2)
-    fhat=Array(Float64,data_size)
-    for i=1:data_size
-  	fhat[i]=dot(V[:,i],w)
-    end
-    return fhat
-end
-
 function GPTSGLD(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::Integer,m::Integer,epsw::Real,epsU::Real,burnin::Integer,maxepoch::Integer)
     # phi is the D by n by N array of features where phi[k,:,i]=phi^(k)(x_i)
     # sigma is the s.d. of the observed values
@@ -330,22 +318,147 @@ function GPTSGLD(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::Integer,
 	          if epoch>burnin
 	            w_store[:,((epoch-burnin)-1)*numbatches+batch]=w
 	            U_store[:,:,:,((epoch-burnin)-1)*numbatches+batch]=U
-	          end
+	        end
         end
+        epsw = epsw * (epoch/(epoch + 1))^(0.55)
     end
     return w_store,U_store
 end
 
 
-@everywhere function RMSESGLD(w_store::Array,U_store::Array,I::Array,phitest::Array,ytest::Array)
+function RMSESGLDvec(w_store::Array,U_store::Array,I::Array,phitest::Array,ytest::Array)
+    Ntest=length(ytest);
+    T=size(w_store,2);
+   #= meanfhat= @parallel (+) for i=1:T
+        pred(w_store[:,i],U_store[:,:,:,i],I,phitest);
+    end
+    meanfhat=meanfhat/T;=#
+    yfit = Array(Float64,Ntest,T); RMSEvec = Array(Float64,1,T);
+    for i = 1:T
+      yfit[:,i] = pred(w_store[:,i],U_store[:,:,:,i],I,phitest);
+      RMSEvec[1,i] = norm(ytest-yfit[:,i])/sqrt(Ntest);
+        end
+    meanfhat=mean(yfit,2)
+#return norm(ytest-meanfhat)/sqrt(Ntest),RMSEvec;
+return RMSEvec
+end
+
+function RMSESGLD(w_store::Array,U_store::Array,I::Array,phitest::Array,ytest::Array)
     Ntest=length(ytest);
     T=size(w_store,2);
     meanfhat= @parallel (+) for i=1:T
         pred(w_store[:,i],U_store[:,:,:,i],I,phitest);
     end
     meanfhat=meanfhat/T;
-    return norm(ytest-meanfhat)/sqrt(Ntest);
+return norm(ytest-meanfhat)/sqrt(Ntest);
 end
 
-end
+function GPNHT_SGLDERM(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::Integer,m::Integer,epsw::Real,epsU::Real,
+    burnin::Integer,maxepoch::Integer,L::Integer)
+    # phi is the D by n by N array of features where phi[k,:,i]=phi^(k)(x_i)
+    # sigma is the s.d. of the observed values
+    # epsw,epsU are the epsilons for w and U resp.
+    # maxepoch is the number of sweeps through whole dataset
 
+    n,D,N=size(phi)
+    numbatches=int(ceil(N/m))
+    sigma_w=1;
+
+    # initialise w,U^(k)
+    w_store=Array(Float64,Q,maxepoch*numbatches)
+    U_store=Array(Float64,n,r,D,maxepoch*numbatches)
+    w=sigma_w*randn(Q)
+
+    U=Array(Float64,n,r,D)
+    for k=1:D
+        Z=randn(r,n)
+        U[:,:,k]=transpose(\(sqrtm(Z*Z'),Z)) #sample uniformly from V_{n,r}
+    end
+
+
+    for epoch=1:(burnin+maxepoch)
+        #randomly permute training data and divide into mini_batches of size m
+        perm=randperm(N)
+        phi=phi[:,:,perm]; y=y[perm];
+
+        # run SGLD on w and SGLDERM on U
+        for batch=1:numbatches
+            # random samples for the stochastic gradient
+            idx=(m*(batch-1)+1):min(m*batch,N)
+            phi_batch=phi[:,:,idx]; y_batch=y[idx];
+            batch_size=length(idx) #this is m except for last batch
+
+            p = randn(Q); zeta_w = 1.0;  zeta_U = ones(D); V_U = randn(n,r,D)
+            for l in 1:L
+
+            # compute <phi^(k)(x_i),U^(k)_{.l}> for all k,l,batch and store in temp
+                temp=phidotU(U,phi_batch)
+
+                # compute V st V[q,i]=prod_{k=1 to D}(temp[k,I[q,k],i])
+                V=computeV(temp,I)
+
+                # compute fhat where fhat[i]=V[:,i]'w
+                fhat=computefhat(V,w)
+
+                # compute U_phi[q,i,k]=expression in big brackets in (11)
+                U_phi=Array(Float64,Q,batch_size,D)
+                for k=1:D
+                    for i=1:batch_size
+                        for q=1:Q
+                            U_phi[q,i,k]=V[q,i]/temp[k,I[q,k],i]
+                        end
+                    end
+                end
+                # now compute a_l^(k)(x_i) for l=1,...,r k=1,..,D and store in A
+                A=zeros(r,D,batch_size)
+                for i=1:batch_size
+                    for k=1:D
+                        for l in unique(I[:,k])
+                            index=findin(I[:,k],l) #I_l
+                            A[l,k,i]=dot(U_phi[index,i,k],w[index])
+                        end
+                    end
+                end
+                # compute Psi as in (12)
+                Psi=Array(Float64,n*r,batch_size,D)
+                for i=1:batch_size
+                    for k=1:D
+                        Psi[:,i,k]=kron(A[:,k,i],phi_batch[:,k,i])
+                    end
+                end
+
+                # now can compute gradw, the stochastic gradient of log post wrt w
+                gradw=(N/batch_size)*V*(y_batch-fhat)/(sigma^2)-w/(sigma_w^2)
+
+                # can now compute gradU where gradU[:,:,k]=stochastic gradient of log post wrt U^(k)
+                gradU=Array(Float64,n,r,D)
+                for k=1:D
+                    gradU[:,:,k]=reshape((N/batch_size)*Psi[:,:,k]*(y_batch-fhat)/(sigma^2),n,r)
+                end
+
+                # thermostats
+                p += sqrt(epsw)*(gradw - zeta_w*p + sqrt(2*sqrt(epsw))*randn(Q))
+
+                w[:] += sqrt(epsw)*p[:];
+                for k = 1:D
+                    V_U[:,:,k] = proj(U[:,:,k],sqrt(epsU)*(gradU[:,:,k]/2 - zeta_U[k]* V_U[:,:,k]
+                                + sqrt(2*sqrt(epsU))*randn(n,r)) +  V_U[:,:,k])
+                    U[:,:,k]=geod(U[:,:,k],V_U[:,:,k],sqrt(epsU))
+                end
+
+                zeta_w += sqrt(epsw)*((p'*p)[1]/Q - 1)
+                for k in 1:D
+                    zeta_U[k] += sqrt(epsU)*(trace(V_U[:,:,k]'*V_U[:,:,k])/(n*r) - 1)
+                end
+            end
+
+
+            if epoch>burnin
+                w_store[:,((epoch-burnin)-1)*numbatches+batch]=w
+                U_store[:,:,:,((epoch-burnin)-1)*numbatches+batch]=U
+            end
+        end
+    end
+    return w_store,U_store
+end
+end

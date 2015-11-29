@@ -1,10 +1,10 @@
-module GPT_Gibbs
+module GPNotensor
 
 using Distributions
 
 export datawhitening,featureNotensor,RMSE,FullTheta
-  
-function featureNotensor(X::Array,n::Integer,length_scale::Real,seed::Integer)    
+
+function featureNotensor(X::Array,n::Integer,length_scale::Real,seed::Integer)
     N,D=size(X)
     phi=Array(Float64,n,N)
     srand(seed)
@@ -17,9 +17,9 @@ function featureNotensor(X::Array,n::Integer,length_scale::Real,seed::Integer)
 end
 
 
-function datawhitening(X::Array) 
-    for i = 1:size(X,2)   
-        X[:,i] = (X[:,i] - mean(X[:,i]))/std(X[:,i])   
+function datawhitening(X::Array)
+    for i = 1:size(X,2)
+        X[:,i] = (X[:,i] - mean(X[:,i]))/std(X[:,i])
     end
     return X
 end
@@ -41,4 +41,3 @@ function FullTheta(phi::Array,y::Array,sigma::Real)
 end
 
 end
- 

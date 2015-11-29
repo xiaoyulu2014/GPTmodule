@@ -1,5 +1,5 @@
 @everywhere using DataFrames
-@everywhere using GPT_Gibbs
+@everywhere using GPTinf
 @everywhere data=DataFrames.readtable("Folds5x2_pp.csv", header = true);
 
 @everywhere data = convert(Array,data);
@@ -31,13 +31,15 @@
 #=
 restrain_Q=SharedArray(Float64,5,5);timertrain_Q=SharedArray(Float64,5,5);timer_Q = SharedArray(Float64,5,5)
 restest_Q=SharedArray(Float64,5,5);timertest_Q=SharedArray(Float64,5,5);
-Qvec = round(linspace(r,r^D,5))
+Qvec = round(linspace(100,5000,5)); seed = 17;
+phitrain=feature(Xtrain,n,length_scale,seed);
+phitest=feature(Xtest,n,length_scale,seed);
 @parallel for i in 1:5
     Q = convert(Int,Qvec[i])
     @parallel for j in 1:5
 	tic();
    	seed = j;
-    	I=samplenz(r,D,Q,seed);
+    I=samplenz(r,D,Q,seed);
    	w_store,U_store=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter);
    	timer_Q[i,j] = toq();
   	tic();
