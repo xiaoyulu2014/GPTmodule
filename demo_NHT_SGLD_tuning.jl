@@ -30,9 +30,10 @@ m = 500;
 L = 10;
 maxepoch = 10
 I=samplenz(r,D,Q,seed);
-phitrain=feature(Xtrain,n,length_scale,seed);
-phitest=feature(Xtest,n,length_scale,seed);
 epsw = 10.0^(-8);epsU = 10.0^(-6);
+scale = sqrt(n/(Q^(1/D)));
+phitrain=feature(Xtrain,n,length_scale,seed,scale);
+phitest=feature(Xtest,n,length_scale,seed,scale);
 
 restrain_n=SharedArray(Float64,5,5);timertrain_n=SharedArray(Float64,5,5);timer_n = SharedArray(Float64,5,5)
 restest_n=SharedArray(Float64,5,5);timertest_n=SharedArray(Float64,5,5);

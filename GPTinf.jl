@@ -12,20 +12,20 @@ function datawhitening(X::Array)
 end
 
 #extract features from tensor decomp of each row of X
-function feature(X::Array,n::Integer,length_scale::Real,seed::Integer)
+function feature(X::Array,n::Integer,length_scale::Real,seed::Integer,scale::Real)
     N,D=size(X)
     phi=Array(Float64,n,D,N)
     srand(seed)
     Z=randn(n,D)/length_scale
-    b=2*pi*rand(n,D)
+    b=rand(n,D)*2*pi
     for i=1:N
-        for k=1:D
-            for j=1:n
-                phi[j,k,i]=cos(X[i,k]*Z[j,k]+b[j,k])
-            end
-        end
+    	for k=1:D
+	      for j=1:n
+      		phi[j,k,i]=cos(X[i,k]*Z[j,k]+b[j,k])
+	      end
+    	end
     end
-    return sqrt(2/n)*phi
+    return scale*sqrt(2/n)*phi
 end
 
 # sample the Q random non-zero locations of w
@@ -362,7 +362,7 @@ function GPNHT_SGLDERM(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::In
 
     n,D,N=size(phi)
     numbatches=int(ceil(N/m))
-    sigma_w=1 #1/Q;
+    sigma_w=1;
 
     # initialise w,U^(k)
     w_store=Array(Float64,Q,maxepoch*numbatches)
