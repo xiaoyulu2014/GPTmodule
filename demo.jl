@@ -32,8 +32,8 @@
 restrain_Q=SharedArray(Float64,5,5);timertrain_Q=SharedArray(Float64,5,5);timer_Q = SharedArray(Float64,5,5)
 restest_Q=SharedArray(Float64,5,5);timertest_Q=SharedArray(Float64,5,5);
 Qvec = round(linspace(100,5000,5)); seed = 17;
-phitrain=feature(Xtrain,n,length_scale,seed);
-phitest=feature(Xtest,n,length_scale,seed);
+phitrain=feature(Xtrain,n,length_scale,seed,1);
+phitest=feature(Xtest,n,length_scale,seed),1;
 @parallel for i in 1:5
     Q = convert(Int,Qvec[i])
     @parallel for j in 1:5
@@ -70,8 +70,8 @@ nvec = round(linspace(r,120,5))
     	tic();
 	seed = j;
 	I=samplenz(r,D,Q,seed);
- 	phitrain=feature(Xtrain,n,length_scale,seed);
- 	phitest=feature(Xtest,n,length_scale,seed);
+ 	phitrain=feature(Xtrain,n,length_scale,seed,1);
+ 	phitest=feature(Xtest,n,length_scale,seed,1);
         w_store,U_store=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter);
         timer_n[i,j] = toq();
 	tic();
@@ -93,8 +93,8 @@ outfile=open("RMSEgibbs_n","a") #append to file
 =#
 
 @everywhere n = 50; @everywhere Q = 100; @everywhere seed = 17;
-@everywhere phitrain=feature(Xtrain,n,length_scale,seed);
-@everywhere phitest=feature(Xtest,n,length_scale,seed);
+@everywhere phitrain=feature(Xtrain,n,length_scale,seed,1);
+@everywhere phitest=feature(Xtest,n,length_scale,seed,1);
 restrain_r=SharedArray(Float64,5,5);timertrain_r=SharedArray(Float64,5,5);;timer_r = SharedArray(Float64,5,5)
 restest_r=SharedArray(Float64,5,5);timertest_r=SharedArray(Float64,5,5);
 rvec = round(linspace(5,50,5));
