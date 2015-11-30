@@ -361,8 +361,8 @@ function GPNHT_SGLDERM(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::In
     # maxepoch is the number of sweeps through whole dataset
 
     n,D,N=size(phi)
-    numbatches=round(ceil(N/m))
-    sigma_w=1/Q;
+    numbatches=int(ceil(N/m))
+    sigma_w=1 #1/Q;
 
     # initialise w,U^(k)
     w_store=Array(Float64,Q,maxepoch*numbatches)
@@ -389,7 +389,7 @@ function GPNHT_SGLDERM(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::In
             batch_size=length(idx) #this is m except for last batch
 
             p = randn(Q); zeta_w = 1.0;  zeta_U = ones(D); V_U = randn(n,r,D)
-            for l in 1:L
+            for leapfrog = 1:L
 
             # compute <phi^(k)(x_i),U^(k)_{.l}> for all k,l,batch and store in temp
                 temp=phidotU(U,phi_batch)
@@ -441,7 +441,7 @@ function GPNHT_SGLDERM(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::In
 
                 w[:] += sqrt(epsw)*p[:];
                 for k = 1:D
-                    V_U[:,:,k] = proj(U[:,:,k],sqrt(epsU)*(gradU[:,:,k]/2 - zeta_U[k]* V_U[:,:,k]
+                    V_U[:,:,k] = proj(U[:,:,k],sqrt(epsU)*(gradU[:,:,k] - zeta_U[k]* V_U[:,:,k]
                                 + sqrt(2*sqrt(epsU))*randn(n,r)) +  V_U[:,:,k])
                     U[:,:,k]=geod(U[:,:,k],V_U[:,:,k],sqrt(epsU))
                 end
