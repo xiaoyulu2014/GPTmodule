@@ -30,9 +30,10 @@ m = 500;
 L = 10;
 maxepoch = 10
 I=samplenz(r,D,Q,seed);
-phitrain=feature(Xtrain,n,length_scale,seed);
-phitest=feature(Xtest,n,length_scale,seed);
-epsw = 10.0^(-8);epsU = 10.0^(-6);
+scale= sqrt(n/(Q^(1/D)));
+phitrain=feature(Xtrain,n,length_scale,seed,scale);
+phitest=feature(Xtest,n,length_scale,seed,scale);
+epsw =2e-6; epsU = 1e-8;
 
 restrain_n=SharedArray(Float64,5,1);timertrain_n=SharedArray(Float64,5,1);timer_n = SharedArray(Float64,5,1)
 restest_n=SharedArray(Float64,5,1);timertest_n=SharedArray(Float64,5,1);
@@ -42,8 +43,8 @@ for i in 1:5
   n = convert(Int,nvec[i])
   seed = i; tic();
 	I=samplenz(r,D,Q,seed);
- 	phitrain=feature(Xtrain,n,length_scale,seed);
- 	phitest=feature(Xtest,n,length_scale,seed);
+ 	phitrain=feature(Xtrain,n,length_scale,seed,scale);
+ 	phitest=feature(Xtest,n,length_scale,seed,scale);
   w_store,U_store=GPTinf.GPNHT_SGLDERM(phitrain,ytrain,sigma,I,r,Q,m,epsw,epsU,burnin,maxepoch,L);
   timer_n[i,1] = toq();
 	tic();
@@ -60,3 +61,11 @@ outfile=open("RMSENHTSGLD_n","a") #append to file
     println(outfile,"restrain_n=",restrain_n,";timertrain_n=",timertrain_n,";timer_n=",timer_n,
             ";restest_n=",restest_n,";timertest_n=",timertest_n);
     close(outfile)
+
+using PyPlot
+figure()
+subplot(121); plot(collect(w_store[1,:])); plot(collect(w_store[2,:])); plot(collect(w_store[10,:]))
+title("traceplots of w");
+subplot(122); plot(collect(collect(U_store[150,2,1,:]))); plot(collect(collect(U_store[10,8,2,:])));
+plot(collect(collect(U_store[30,20,4,:]))); title("traceplots of U")
+savefig("NHT_SGLD_traceplots1")

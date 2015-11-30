@@ -30,8 +30,8 @@ r = 20;
 Q = 100;
 seed = 17;
 m = 500;
-phitrain=GPTinf.feature(Xtrain,n,length_scale,seed);
-phitest=GPTinf.feature(Xtest,n,length_scale,seed);
+phitrain=GPTinf.feature(Xtrain,n,length_scale,seed,1);
+phitest=GPTinf.feature(Xtest,n,length_scale,seed,1);
 I=GPTinf.samplenz(r,D,Q,seed);
 maxepoch = 50;
 
