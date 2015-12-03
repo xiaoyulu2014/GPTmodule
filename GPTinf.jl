@@ -1,14 +1,29 @@
-@everywhere module GPTinf
+module GPTinf
 
 using Distributions
 
-export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM
+export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM, RMSESGLDvec, pred, data_simulator
 
 function datawhitening(X::Array)
     for i = 1:size(X,2)
         X[:,i] = (X[:,i] - mean(X[:,i]))/std(X[:,i])
     end
     return X
+end
+
+function data_simulator(X::Array,n::Integer,r::Integer,Q::Integer,sigma::Real,length_scale::Real,seed::Integer)
+  N,D = size(X)
+  w = randn(Q)
+  U=Array(Float64,n,r,D)
+  for k=1:D
+    Z=randn(r,n)
+    U[:,:,k]=transpose(\(sqrtm(Z*Z'),Z)) #sample uniformly from V_{n,r}
+  end
+  I=samplenz(r,D,Q,seed)
+  phi = feature(X,r,length_scale,seed,1)
+  temp=phidotU(U,phi)
+  V=computeV(temp,I)
+  return computefhat(V,w) + sigma*randn(N)
 end
 
 #extract features from tensor decomp of each row of X
@@ -46,7 +61,7 @@ function proj(U::Array,V::Array)
     return V-U*(U'*V+V'*U)/2
 end
 
-# define geod for Stiefel manifold
+# define geod for Stiefel manifold - just want endpt
 function geod(U::Array,mom::Array,t::Real)
     n,r=size(U)
     A=U'*mom
@@ -55,13 +70,33 @@ function geod(U::Array,mom::Array,t::Real)
     if sum(isnan(E))>0
         return zeros(n,r)
     else
-        tmp=[U mom]*E[:,1:r]*expm(-t*A)
-        #ensure that tmp has cols of unit norm
+        mexp=expm(-t*A)
+        tmpU=[U mom]*E[:,1:r]*mexp;
+        #ensure that tmpU has cols of unit norm
         normconst=Array(Float64,1,r);
         for l=1:r
-    	    normconst[1,l]=norm(tmp[:,l])
+    	    normconst[1,l]=norm(tmpU[:,l])
         end
-        return tmp./repmat(normconst,n,1)
+        return tmpU./repmat(normconst,n,1)
+    end
+end
+function geodboth(U::Array,mom::Array,t::Real)
+    n,r=size(U)
+    A=U'*mom
+    temp=[A -mom'*mom;eye(r) A]
+    E=expm(t*temp) #can become NaN when temp too large. Return 0 in this case
+    if sum(isnan(E))>0
+        return zeros(n,r),zeros(n,r)
+    else
+        mexp=expm(-t*A)
+        tmpU=[U mom]*E[:,1:r]*mexp;
+        tmpV=[U mom]*E[:,(r+1):end]*mexp;
+        #ensure that tmpU has cols of unit norm
+        normconst=Array(Float64,1,r);
+        for l=1:r
+    	    normconst[1,l]=norm(tmpU[:,l])
+        end
+        return tmpU./repmat(normconst,n,1),tmpV
     end
 end
 
@@ -354,7 +389,7 @@ return norm(ytest-meanfhat)/sqrt(Ntest);
 end
 
 function GPNHT_SGLDERM(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::Integer,m::Integer,epsw::Real,epsU::Real,
-    burnin::Integer,maxepoch::Integer,L::Integer)
+    burnin::Integer,maxepoch::Integer,L::Integer,A_w::Real, A_U::Real)
     # phi is the D by n by N array of features where phi[k,:,i]=phi^(k)(x_i)
     # sigma is the s.d. of the observed values
     # epsw,epsU are the epsilons for w and U resp.
@@ -388,7 +423,7 @@ function GPNHT_SGLDERM(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::In
             phi_batch=phi[:,:,idx]; y_batch=y[idx];
             batch_size=length(idx) #this is m except for last batch
 
-            p = randn(Q); zeta_w = 1.0;  zeta_U = ones(D); V_U = randn(n,r,D)
+            p = randn(Q); zeta_w = A_w;  zeta_U = A_U*ones(D); V_U = randn(n,r,D)
             for leapfrog = 1:L
 
             # compute <phi^(k)(x_i),U^(k)_{.l}> for all k,l,batch and store in temp
@@ -437,13 +472,13 @@ function GPNHT_SGLDERM(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::In
                 end
 
                 # thermostats
-                p += sqrt(epsw)*(gradw - zeta_w*p + sqrt(2*sqrt(epsw))*randn(Q))
+                p += sqrt(epsw)*(gradw - zeta_w*p + sqrt(2*A_w*sqrt(epsw))*randn(Q))
 
                 w[:] += sqrt(epsw)*p[:];
                 for k = 1:D
                     V_U[:,:,k] = proj(U[:,:,k],sqrt(epsU)*(gradU[:,:,k] - zeta_U[k]* V_U[:,:,k]
-                                + sqrt(2*sqrt(epsU))*randn(n,r)) +  V_U[:,:,k])
-                    U[:,:,k]=geod(U[:,:,k],V_U[:,:,k],sqrt(epsU))
+                                + sqrt(2*A_U*sqrt(epsU))*randn(n,r)) +  V_U[:,:,k])
+                    U[:,:,k], V_U[:,:,k]=geodboth(U[:,:,k],V_U[:,:,k],sqrt(epsU))
                 end
 
                 zeta_w += sqrt(epsw)*((p'*p)[1]/Q - 1)
@@ -461,4 +496,6 @@ function GPNHT_SGLDERM(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::In
     end
     return w_store,U_store
 end
+
+
 end
