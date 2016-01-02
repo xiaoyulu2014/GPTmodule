@@ -1,9 +1,9 @@
 using GPTinf
 using PyPlot
 ###generate synthetic data
-N = 100;
+N = 500;
 #Xtrain = [linspace(-10,10,N) linspace(-10,10,N)];
-Xtrain = randn(N,4)
+Xtrain = randn(N,3)
 D = size(Xtrain,2)
 r = 10; n = r; Q = r^D; sigma = 0.1; length_scale = 5; seed = 17;
 ytrain = data_simulator(Xtrain,n,r,Q,sigma,length_scale,seed);
@@ -39,12 +39,12 @@ seed = 123;
 
 
 r = 5;
-Q = 100;
+Q = 10;
 # RMSE  with varying Q and n, fixed r
-n_vec = [5,10,20,50,100];RMSEtrain = Array(Float64,5)
+n_vec = [5,50,100];RMSEtrain = Array(Float64,3)
 figure()
 subplot(121);
-for i in 1:5
+for i in 1:3
   n = convert(Int, n_vec[i])
   phitrain=feature(Xtrain,n,length_scale,seed,1);
   I=samplenz(r,D,Q,seed);
@@ -62,7 +62,7 @@ legend(loc="upper right",fancybox="false") # Create a legend of all the existing
 #are we able to recover the data with n = r =10?
 n = 10; r = 10
 phitrain=feature(Xtrain,n,length_scale,seed,1);
-Q_vec = [r,100,r^D];RMSEtrain = Array(Float64,3)
+Q_vec = [r,15,500];RMSEtrain = Array(Float64,3)
 subplot(122);
 for i in 1:3
   Q = convert(Int, Q_vec[i])

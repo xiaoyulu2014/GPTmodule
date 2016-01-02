@@ -17,7 +17,7 @@ function data_simulator(X::Array,n::Integer,r::Integer,Q::Integer,sigma::Real,le
   U=Array(Float64,n,r,D)
   for k=1:D
     Z=randn(r,n)
-    U[:,:,k]=transpose(\(sqrtm(Z*Z'),Z)) #sample uniformly from V_{n,r}
+    U[:,:,k]=transpose(\(sqrtm(Z*Z'),Z)) 
   end
   I=samplenz(r,D,Q,seed)
   phi = feature(X,r,length_scale,seed,1)
