@@ -38,6 +38,7 @@ seed = 123;
 
 
 
+<<<<<<< HEAD
 r = 5;
 Q = 10;
 # RMSE  with varying Q and n, fixed r
@@ -45,6 +46,14 @@ n_vec = [5,50,100];RMSEtrain = Array(Float64,3)
 figure()
 subplot(121);
 for i in 1:3
+=======
+r = 10;
+Q = 100;
+# RMSE  with varying Q and n, fixed r
+n_vec = [5,20,50,100];RMSEtrain = Array(Float64,length(n_vec))
+subplot(121);
+for i in 1:length(n_vec)
+>>>>>>> 9b9a869ae0f6411327ffdae8c0e094b6e5ab6c57
   n = convert(Int, n_vec[i])
   phitrain=feature(Xtrain,n,length_scale,seed,1);
   I=samplenz(r,D,Q,seed);
@@ -59,8 +68,29 @@ end
 legend(loc="upper right",fancybox="false") # Create a legend of all the existing plots using their labels as names
 
 
+
+r = 5;
+Q = 100;
+# RMSE  with varying Q and n, fixed r
+n_vec = [5,20,50,100];RMSEtrain = Array(Float64,length(n_vec))
+figure()
+subplot(122);
+for i in 1:length(n_vec)
+  n = convert(Int, n_vec[i])
+  phitrain=feature(Xtrain,n,length_scale,seed,1);
+  I=samplenz(r,D,Q,seed);
+  w_store,U_store=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter);
+  RMSEtrain[i] = ytrainStd*RMSE(w_store[:,end-burnin1:end],U_store[:,:,:,end-burnin1:end],I,phitrain,ytrain);
+  RMSEvec = ytrainStd*RMSESGLDvec(w_store,U_store,I,phitrain,ytrain);
+  println("n = ", n, " RMSEtrain = ", round(RMSEtrain[i],3));
+  yfit = yhat(w_store,U_store,I::Array,phitrain::Array);
+  plot(RMSEvec[:],label = "n = $n");xlabel("number of iterations");ylabel("RMSE")
+  title("r = $r, Q = $Q, varying n")
+end
+legend(loc="upper right",fancybox="false") # Create a legend of all the existing plots using their labels as names
+
 #are we able to recover the data with n = r =10?
-n = 10; r = 10
+#=n = 10; r = 10
 phitrain=feature(Xtrain,n,length_scale,seed,1);
 Q_vec = [r,15,500];RMSEtrain = Array(Float64,3)
 subplot(122);
@@ -79,7 +109,7 @@ legend(loc="upper right",fancybox="false") # Create a legend of all the existing
 
 suptitle("training RMSE on 4D synthetic data \n generated with r = 10 features")
 
-
+=#
 
 
 
