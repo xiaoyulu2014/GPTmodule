@@ -35,25 +35,29 @@ burnin=0;  ## this is for traceplots purpose
 numiter=50; burnin1 = 30 ## omit first 30 iterations when prediting
 seed = 123;
 
+phitrain=feature(Xtrain,n,length_scale,seed,1);
+I=samplenz(r,D,Q,seed);
+w_store,U_store=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter);
+RMSEgibbs = ytrainStd*RMSE(w_store[:,end-burnin1:end],U_store[:,:,:,end-burnin1:end],I,phitrain,ytrain);
+yfitgibbs = yhat(w_store,U_store,I::Array,phitrain::Array);
+
+epsw = 0.01; epsU = 0.001; L = 10; seed = 123;
+w_store,U_store,accept_prob=GPTHMC(phitrain,ytrain,sigma,I,r,Q,epsw,epsU,burnin,numiter,L,seed);
+RMSEHMC = ytrainStd*RMSE(w_store[:,end-burnin1:end],U_store[:,:,:,end-burnin1:end],I,phitrain,ytrain);
+yfitHMC = yhat(w_store,U_store,I::Array,phitrain::Array);
 
 
 
-<<<<<<< HEAD
-r = 5;
-Q = 10;
+
+
+#=
 # RMSE  with varying Q and n, fixed r
-n_vec = [5,50,100];RMSEtrain = Array(Float64,3)
-figure()
-subplot(121);
-for i in 1:3
-=======
 r = 10;
 Q = 100;
 # RMSE  with varying Q and n, fixed r
 n_vec = [5,20,50,100];RMSEtrain = Array(Float64,length(n_vec))
 subplot(121);
 for i in 1:length(n_vec)
->>>>>>> 9b9a869ae0f6411327ffdae8c0e094b6e5ab6c57
   n = convert(Int, n_vec[i])
   phitrain=feature(Xtrain,n,length_scale,seed,1);
   I=samplenz(r,D,Q,seed);
@@ -66,9 +70,9 @@ for i in 1:length(n_vec)
   title("r = $r, Q = $Q, varying n")
 end
 legend(loc="upper right",fancybox="false") # Create a legend of all the existing plots using their labels as names
+=#
 
-
-
+#=
 r = 5;
 Q = 100;
 # RMSE  with varying Q and n, fixed r
@@ -88,6 +92,8 @@ for i in 1:length(n_vec)
   title("r = $r, Q = $Q, varying n")
 end
 legend(loc="upper right",fancybox="false") # Create a legend of all the existing plots using their labels as names
+=#
+
 
 #are we able to recover the data with n = r =10?
 #=n = 10; r = 10

@@ -2,7 +2,7 @@ module GPTinf
 
 using Distributions
 
-export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM, RMSESGLDvec, pred, data_simulator
+export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM, RMSESGLDvec, pred, data_simulator, GPTHMC
 
 function datawhitening(X::Array)
     for i = 1:size(X,2)
@@ -155,6 +155,35 @@ function pred(w::Array,U::Array,I::Array,phitest::Array)
 
     # compute fhat where fhat[i]=V[:,i]'w
     return computefhat(V,w)
+end
+
+function computeU_phi(V::Array,temp::Array,I::Array)
+    Q,D=size(I)
+    data_size=size(V,2)
+    U_phi=Array(Float64,Q,data_size,D)
+    for k=1:D
+        for i=1:data_size
+            for q=1:Q
+	        U_phi[q,i,k]=V[q,i]/temp[k,I[q,k],i]
+            end
+	end
+    end
+    return U_phi
+end
+
+
+function computeA(U_phi::Array,w::Array,I::Array,r::Integer)
+    Q,data_size,D=size(U_phi)
+    A=zeros(r,D,data_size)
+    for i=1:data_size
+        for k=1:D
+            for l in unique(I[:,k])
+                index=findin(I[:,k],l) 
+                A[l,k,i]=dot(U_phi[index,i,k],w[index]) 
+            end
+        end
+    end
+    return A
 end
 
 #work out minimum RMSE by averaging over predictions, starting from last prediction
@@ -495,6 +524,120 @@ function GPNHT_SGLDERM(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::In
         end
     end
     return w_store,U_store
+end
+
+
+#HMC on Tucker Model 
+function GPTHMC(phi::Array, y::Array, sigma::Real, I::Array, r::Integer, Q::Integer, epsw::Real, epsU::Real, burnin::Integer, numiter::Integer, L::Integer,param_seed::Integer)
+    
+    n,D,N=size(phi)
+    sigma_u = sqrt(1/r)
+    sigma_w = sqrt(r^D/Q)
+	
+    
+    # initialise w,U^(k)
+    w_store=Array(Float64,Q,numiter)
+    U_store=Array(Float64,n,r,D,numiter)
+    accept_prob=Array(Float64,numiter+burnin)
+    srand(param_seed)
+    w=sigma_w*randn(Q)
+
+    U=Array(Float64,n,r,D)
+    for k=1:D
+        U[:,:,k]=sigma_u*randn(n,r)
+    end
+
+    for iter=1:(burnin+numiter)
+        w_old=w; U_old=U;
+        # initialise momentum terms and Hamiltonian
+        p=randn(Q); mom=Array(Float64,n,r,D);
+        for k=1:D
+            mom[:,:,k]= randn(n,r)   
+        end
+
+        H_old=-sum(w.*w)/(2*sigma_w^2)-sum(U.*U)/(2*sigma_u^2)-norm(y-pred(w,U,I,phi))^2/(2*sigma^2)-sum(mom.*mom)/2-sum(p.*p)/2;
+        #println("H=",H_old)
+        pred_new=Array(Float64,N); # used later for computing H_new
+	#half leapfrog step
+        temp=phidotU(U,phi)
+	V=computeV(temp,I)
+	fhat=computefhat(V,w)
+	gradw=V*(y-fhat)/(sigma^2)-w/(sigma_w^2)
+	p+=epsw*gradw/2
+	U_phi=computeU_phi(V,temp,I)
+	A=computeA(U_phi,w,I,r)
+	Psi=computePsi(A,phi)
+	gradU=Array(Float64,n,r,D)
+            for k=1:D
+                gradU[:,:,k]=reshape(Psi[:,:,k]*(y-fhat)/(sigma^2),n,r)-U[:,:,k]/(sigma_u^2)
+		mom[:,:,k]+=epsU*gradU/2
+            end
+
+        # leapfrog step
+        for l=1:L
+
+	    ### update w,U,mom 
+	    # update w, U
+	    w+=epsw*p
+		for k=1:D
+		U[:,:,k]+=epsU*mom[:,:,k]
+	    end
+
+	    ### update p and mom
+	    # compute <phi^(k)(x_i),U^(k)_{.l}> for all k,l,i and store in temp
+	    temp=phidotU(U,phi)
+	    # compute V st V[q,i]=prod_{k=1 to D}(temp[k,I[q,k],i])
+	    V=computeV(temp,I)
+	    # compute fhat where fhat[i]=V[:,i]'w
+	    fhat=computefhat(V,w)
+	    # now can compute gradw, the stochastic gradient of log post wrt w
+	    gradw=V*(y-fhat)/(sigma^2)-w/(sigma_w^2)
+	    # update p
+	    p+=epsw*gradw;
+	    # compute U_phi[q,i,k]=expression in big brackets in (11)
+	    U_phi=computeU_phi(V,temp,I)
+	    # compute a_l^(k)(x_i) for l=1,...,r k=1,..,D and store in A
+	    A=computeA(U_phi,w,I,r)
+	    # compute Psi as in (12)
+	    Psi=computePsi(A,phi)
+	    gradU=Array(Float64,n,r,D)
+	    for k=1:D
+		gradU[:,:,k]=reshape(Psi[:,:,k]*(y-fhat)/(sigma^2),n,r)-U[:,:,k]/(sigma_u^2)
+	    mom[:,:,k]+=epsU*gradU
+	    end
+	end
+	#another half leapfrog step
+	temp=phidotU(U,phi)
+	V=computeV(temp,I)
+	fhat=computefhat(V,w)
+	gradw=V*(y-fhat)/(sigma^2)-w/(sigma_w^2)
+	p+=epsw*gradw/2
+	U_phi=computeU_phi(V,temp,I)
+	A=computeA(U_phi,w,I,r)
+	Psi=computePsi(A,phi)
+	gradU=Array(Float64,n,r,D)
+        for k=1:D
+              gradU[:,:,k]=reshape(Psi[:,:,k]*(y-fhat)/(sigma^2),n,r)-U[:,:,k]/(sigma_u^2)
+	      mom[:,:,k]+=epsU*gradU/2
+        end
+	
+        pred_new=fhat;
+        H=-sum(w.*w)/(2*sigma_w^2)-sum(U.*U)/(2*sigma_u^2)-norm(y-pred_new)^2/(2*sigma^2)-sum(mom.*mom)/2-sum(p.*p)/2;
+        u=rand(1);
+        
+        accept_prob[iter]=exp(H-H_old)
+        println("accept_prob=",accept_prob[epoch])
+        
+        if u[1]>accept_prob[iter] #if true, reject 
+            w=w_old; U=U_old;
+        end
+        
+	if iter>burnin
+	    w_store[:,iter-burnin]=w
+	    U_store[:,:,:,iter-burnin]=U
+        end
+    end
+    return w_store,U_store,accept_prob
 end
 
 
