@@ -54,14 +54,19 @@ end
 
 function Cov(gp::GP,x_values)
     n=size(x_values,1);
+    K = Array(Float64,n,n);
     covfn=gp.cov;
-    K=[covfn(x_values[i,:],x_values[j,:]) for i=1:n, j=1:n];
+    for i=1:n
+      for j=1:n
+        K[i,j]=covfn(x_values[i,:],x_values[j,:]);
+      end
+    end
     return K
 end
 
 
 
-function GPpost(gp::GP,xtrain,ytrain,xtest,sigma)
+function GPpost(gp::GP,xtrain::Array,ytrain::Array,xtest::Array,sigma::Real)
     #function to return the posterior mean and variance
     temp=convertTo2D(xtrain);
     xtrain=dimensionCheck(gp.dim,temp);

@@ -11,7 +11,7 @@ Ntrain=500;
 #N=size(data,1);
 #Ntrain=5000;
 Xtrain = data[1:Ntrain,1:D];
-ytrain = data[1:Ntrain,D+1];
+ytrain = reshape(data[1:Ntrain,D+1],Ntrain,1);
 XtrainMean=mean(Xtrain,1);
 XtrainStd=zeros(1,D);
 for i=1:D
@@ -35,3 +35,4 @@ tic();yfittrain = GPpost(gp,Xtrain,ytrain,Xtrain,sigma);timer_train = toc();
 RMSEtrain = ytrainStd* (norm(ytrain-yfittrain)/sqrt(Ntrain));
 tic();yfittest = GPpost(gp,Xtrain,ytrain,Xtest,sigma);timer_test = toc();
 RMSEtest = ytrainStd* (norm(ytest-yfittest)/sqrt(N - Ntrain));
+
