@@ -1,31 +1,33 @@
-@everywhere using DataFrames
-@everywhere using GPTinf
-@everywhere data=DataFrames.readtable("Folds5x2_pp.csv", header = true);
-
-@everywhere data = convert(Array,data);
-@everywhere N=size(data,1);
-@everywhere D=4;
-@everywhere Ntrain=5000;
-@everywhere length_scale=1.4332;
-@everywhere sigma=0.2299;
-@everywhere Xtrain = data[1:Ntrain,1:D];
-@everywhere ytrain = data[1:Ntrain,D+1];
-@everywhere XtrainMean=mean(Xtrain,1);
-@everywhere XtrainStd=zeros(1,D);
-@everywhere for i=1:D
-                XtrainStd[1,i]=std(Xtrain[:,i]);
-            end
-@everywhere ytrainMean=mean(ytrain);
-@everywhere ytrainStd=std(ytrain);
-@everywhere Xtrain = datawhitening(Xtrain);
-@everywhere ytrain = datawhitening(ytrain);
-@everywhere Xtest = (data[Ntrain+1:end,1:D]-repmat(XtrainMean,N-Ntrain,1))./repmat(XtrainStd,N-Ntrain,1);
-@everywhere ytest = (data[Ntrain+1:end,D+1]-ytrainMean)/ytrainStd;
-@everywhere burnin=250;
-@everywhere numiter=50;
-@everywhere r = 8;
-@everywhere n = 50;
-
+using DataFrames
+using GPTinf
+data=DataFrames.readtable("Folds5x2_pp.csv", header = true);
+data = convert(Array,data);
+data = data[1:1000,:];
+N=size(data,1);
+D=4;
+Ntrain=500;
+#@everywhere length_scale=1.4332;
+#@everywhere sigma=0.2299;
+Xtrain = data[1:Ntrain,1:D];
+ytrain = data[1:Ntrain,D+1];
+XtrainMean=mean(Xtrain,1);
+XtrainStd=zeros(1,D);
+for i=1:D
+    XtrainStd[1,i]=std(Xtrain[:,i]);
+end
+ytrainMean=mean(ytrain);
+ytrainStd=std(ytrain);
+Xtrain = datawhitening(Xtrain);
+ytrain = datawhitening(ytrain);
+Xtest = (data[Ntrain+1:end,1:D]-repmat(XtrainMean,N-Ntrain,1))./repmat(XtrainStd,N-Ntrain,1);
+ytest = (data[Ntrain+1:end,D+1]-ytrainMean)/ytrainStd;
+burnin=250;
+numiter=50;
+r = 8;
+n = 50;
+#find hyperparameters
+seed = 17;
+GPNT_hyperparameters(Xtrain,ytrain,n,1,1,0.2,seed)
 
 #### RMSE on test set #######
 #=
@@ -117,8 +119,10 @@ rvec = round(linspace(5,50,5));
     println(r)
 end
 
+#=
 outfile=open("RMSEgibbsr","a") #append to file
     println(outfile,"restrain_r=",restrain_r,";timertrain_r=",timertrain_r,";timer_r=",timer_r,
             ";restest_r=",restest_r,";timertest_r=",timertest_r,
             ";n=",n,";Q=",Q,";rvec=",rvec);
-    close(outfile)
+    close(outfile)=#
+
