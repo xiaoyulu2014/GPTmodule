@@ -56,7 +56,7 @@ function Cov(gp::GP,x_values)
     n=size(x_values,1);
     covfn=gp.cov;
     K=[covfn(x_values[i,:],x_values[j,:]) for i=1:n, j=1:n];
-    return float(K)
+    return K
 end
 
 
