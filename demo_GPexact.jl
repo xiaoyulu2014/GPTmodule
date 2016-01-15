@@ -26,7 +26,7 @@ ytrain = datawhitening(ytrain);
 Xtest = (data[Ntrain+1:end,1:D]-repmat(XtrainMean,N-Ntrain,1))./repmat(XtrainStd,N-Ntrain,1);
 ytest = (data[Ntrain+1:end,D+1]-ytrainMean)/ytrainStd;
 
-length_scale=2.435;sigma=0.253;
+sigmaRBF=0.767;length_scale=2.435;sigma=0.253;
 f =  GPexact.SECov(length_scale,sigmaRBF);
 gp = GPexact.GP(0,f,size(Xtrain,2));
 
