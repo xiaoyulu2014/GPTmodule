@@ -1,12 +1,15 @@
 using GPexact
 
 using DataFrames
-cd("C:/Users/Xiaoyu lu/Dropbox/GP/GPTjulia")
+cd("C:/Users/Xiaoyu lu/Dropbox/GP/GPTmodule")
 data=DataFrames.readtable("Folds5x2_pp.csv", header = true);
 data = convert(Array,data);
-D=4;
+data = data[1:1000,:];
 N=size(data,1);
-Ntrain=5000;
+D=4;
+Ntrain=500;
+#N=size(data,1);
+#Ntrain=5000;
 Xtrain = data[1:Ntrain,1:D];
 ytrain = data[1:Ntrain,D+1];
 XtrainMean=mean(Xtrain,1);
@@ -23,8 +26,8 @@ ytrain = datawhitening(ytrain);
 Xtest = (data[Ntrain+1:end,1:D]-repmat(XtrainMean,N-Ntrain,1))./repmat(XtrainStd,N-Ntrain,1);
 ytest = (data[Ntrain+1:end,D+1]-ytrainMean)/ytrainStd;
 
-length_scale=1.4332;sigma=0.2299;
-f =  GPexact.SECov(length_scale,1);
+length_scale=2.435;sigma=0.253;
+f =  GPexact.SECov(length_scale,sigmaRBF);
 gp = GPexact.GP(0,f,size(Xtrain,2));
 
 #training RMSE = 3.846 ; test RMSE = 4.006; timer = 519.021
