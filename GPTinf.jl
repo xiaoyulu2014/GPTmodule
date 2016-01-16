@@ -268,10 +268,16 @@ function GPTgibbs(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::Integer
 
         for k in 1:D
 
+            # compute <phi^(k)(x_i),U^(k)_{.l}> for all k,l,batch and store in temp
+            temp=phidotU(U,phi)
+
+            # compute V st V[q,i]=prod_{k=1 to D}(temp[k,I[q,k],i])
+            V=computeV(temp,I)
+
             # compute U_phi[q,i,k]=expression in big brackets in (11)
             U_phi=computeU_phi(V,temp,I)
             
-            # compute a_l^(k)(x_i) for l=1,...,r k=1,..,D and store in A
+            # compute a_l^(k)(x_i) for l=1,...,r k=1,.	.,D and store in A
             A=computeA(U_phi,w,I,r)
             
             # compute Psi as in (12)

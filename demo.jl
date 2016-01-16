@@ -25,8 +25,8 @@ using PyPlot
 @everywhere ytrain=datawhitening(ytrain);
 @everywhere Xtest = (data[Ntrain+1:Ntrain+Ntest,1:D]-repmat(XtrainMean,Ntest,1))./repmat(XtrainStd,Ntest,1);
 @everywhere ytest = (data[Ntrain+1:Ntrain+Ntest,D+1]-ytrainMean)/ytrainStd;
-@everywhere burnin=5;
-@everywhere numiter=100;
+@everywhere burnin=10;
+@everywhere numiter=50;
 @everywhere Q=200;
 @everywhere n=150;
 @everywhere scale=1;
@@ -51,7 +51,7 @@ RMSE_w = pmap(func_w,rvec)
 	return(RMSEtest)
 end
 
-RMSE = pmap(func,rvec)
+RMSE_wU = pmap(func,rvec)
 
 
 #myRMSE=SharedArray(Float64,70);
