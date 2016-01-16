@@ -2,7 +2,7 @@ module GPTinf
 
 using Distributions,Optim,ForwardDiff
 
-export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM, RMSESGLDvec, pred, data_simulator, GPTHMC, GPT_SGLDERM_probit
+export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM, RMSESGLDvec, pred, data_simulator, GPTHMC, GPT_w, GPT_SGLDERM_probit,GPNT_hyperparameters,featureNotensor
 
 function datawhitening(X::Array)
     for i = 1:size(X,2)
@@ -11,7 +11,7 @@ function datawhitening(X::Array)
     return X
 end
 
-function data_simulator(X::Array,n::Integer,r::Integer,Q::Integer,sigma::Real,length_scale::Real,seed::Integer)
+function data_simulator(X::Array,n::Integer,r::Integer,Q::Integer,sigma::Real,length_scale::Real,sigma_RBF::Real,seed::Integer)
   N,D = size(X)
   w = randn(Q)
   U=Array(Float64,n,r,D)
@@ -20,27 +20,27 @@ function data_simulator(X::Array,n::Integer,r::Integer,Q::Integer,sigma::Real,le
     U[:,:,k]=transpose(\(sqrtm(Z*Z'),Z)) 
   end
   I=samplenz(r,D,Q,seed)
-  phi = feature(X,r,length_scale,seed,1)
+  phi = feature(X,r,length_scale,sigma_RBF,seed,1)
   temp=phidotU(U,phi)
   V=computeV(temp,I)
   return computefhat(V,w) + sigma*randn(N)
 end
 
 #extract features from tensor decomp of each row of X
-function feature(X::Array,n::Integer,length_scale::Real,seed::Integer,scale::Real)
+function feature(X::Array,n::Integer,length_scale::Real,sigma_RBF::Real,seed::Integer,scale::Real)    
     N,D=size(X)
     phi=Array(Float64,n,D,N)
     srand(seed)
     Z=randn(n,D)/length_scale
     b=rand(n,D)*2*pi
     for i=1:N
-    	for k=1:D
-	      for j=1:n
-      		phi[j,k,i]=cos(X[i,k]*Z[j,k]+b[j,k])
-	      end
-    	end
+	for k=1:D
+	    for j=1:n
+		phi[j,k,i]=cos(X[i,k]*Z[j,k]+b[j,k])
+	    end
+	end
     end
-    return scale*sqrt(2/n)*phi
+    return scale*(sigma_RBF)^(1/D)*sqrt(2/n)*phi
 end
 
 # sample the Q random non-zero locations of w
@@ -277,8 +277,8 @@ function GPTgibbs(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::Integer
             # compute Psi as in (12)
             Psi=computePsi(A,phi)
 
-            invSigma_U = Psi * Psi'/(sigma^2) + (1/sigma_u)^2 * eye(n*r)
-            Mu_U = \(invSigma_U, (Psi * y) / (sigma^2))
+            invSigma_U = Psi[:,:,k] * Psi[:,:,k]'/(sigma^2) + (1/sigma_u)^2 * eye(n*r)
+            Mu_U = \(invSigma_U, (Psi[:,:,k] * y) / (sigma^2))
             U[:,:,k]= reshape(\(chol(invSigma_U,:U),randn(n*r)) + Mu_U,n,r)
         end
 
@@ -761,5 +761,17 @@ function GPNT_hyperparameters(X::Array,y::Array,n::Integer,init_length_scale::Re
         end
     end
     optimize(logmarginal,g!,log([init_length_scale,init_sigma_RBF,init_sigma]),method=:cg,show_trace = true, extended_trace = true)
+end
+
+function featureNotensor(X::Array,n::Integer,length_scale::Real,sigma_RBF::Real,seed::Integer)    
+    N,D=size(X)
+    phi=Array(Float64,n,N)
+    srand(seed)
+    Z=randn(n,D)/length_scale
+    b=2*pi*rand(n)
+    for i=1:N
+        phi[:,i]=cos(sum(repmat(X[i,:],n,1).*Z,2) + b)
+    end
+    return sqrt(2/n)*sigma_RBF*phi
 end
 end
