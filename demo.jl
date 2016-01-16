@@ -54,7 +54,8 @@ end
 RMSE_wU = pmap(func,rvec)
 
 
-#myRMSE=SharedArray(Float64,70);
+#=
+myRMSE=SharedArray(Float64,70);
 @parallel for  Tuple in myt
     i,j=Tuple;
     epsw=float(string("1e-",i)); epsU=float(string("1e-",j));
@@ -71,10 +72,6 @@ println("r=",r,";minRMSE=",minimum(testRMSE),"minepoch=",indmin(testRMSE),";epsw
 end
 
 
-
-
-
-#=
 data=DataFrames.readtable("Folds5x2_pp.csv", header = true);
 data = convert(Array,data);
 data = data[1:1000,:];
@@ -102,12 +99,12 @@ r = 8;
 n = 150;
 seed = 17;
 GPNT_hyperparameters(Xtrain,ytrain,n,1.0,1.0,0.2,seed)
-=#
+
 
 
 
 #### RMSE on test set #######
-#=
+
 restrain_Q=SharedArray(Float64,5,5);timertrain_Q=SharedArray(Float64,5,5);timer_Q = SharedArray(Float64,5,5)
 restest_Q=SharedArray(Float64,5,5);timertest_Q=SharedArray(Float64,5,5);
 Qvec = round(linspace(100,5000,5)); seed = 17;
@@ -169,10 +166,10 @@ outfile=open("RMSEgibbs_n","a") #append to file
     println(outfile,"restrain_n=",restrain_n,";timertrain_n=",timertrain_n,";timer_n=",timer_n,
             ";restest_n=",restest_n,";timertest_n=",timertest_n);
     close(outfile)
-=#
 
 
-#=
+
+
 @everywhere n = 50; @everywhere Q = 100; @everywhere seed = 17;
 @everywhere phitrain=feature(Xtrain,n,length_scale,seed,1);
 @everywhere phitest=feature(Xtest,n,length_scale,seed,1);
@@ -203,5 +200,6 @@ outfile=open("RMSEgibbsr","a") #append to file
     println(outfile,"restrain_r=",restrain_r,";timertrain_r=",timertrain_r,";timer_r=",timer_r,
             ";restest_r=",restest_r,";timertest_r=",timertest_r,
             ";n=",n,";Q=",Q,";rvec=",rvec);
-    close(outfile)=#
+    close(outfile)
+=#
 
