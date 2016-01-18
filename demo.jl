@@ -27,14 +27,17 @@ using PyPlot
 @everywhere ytest = (data[Ntrain+1:Ntrain+Ntest,D+1]-ytrainMean)/ytrainStd;
 @everywhere burnin=10;
 @everywhere numiter=50;
-@everywhere Q=200;
+@everywhere Q=16;   #200
 @everywhere n=150;
 @everywhere scale=1;
 @everywhere phitrain=feature(Xtrain,n,length_scale,sigma_RBF,seed,scale);
 @everywhere phitest=feature(Xtest,n,length_scale,sigma_RBF,seed,scale);
 
+#GPNT_hyperparameters(Xtrain,ytrain,n,1.0,1.0,0.2,seed)
+
+
 ### plot for whether learning U is helpful
-rvec = convert(Array{Int,1},round(linspace(5,50,5)));
+rvec = convert(Array{Int,1},round(linspace(2,20,5)));
 
 @everywhere function func_w(r::Real)
 	I=samplenz(r,D,Q,seed);
