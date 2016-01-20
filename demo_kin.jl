@@ -8,9 +8,6 @@ using DataFrames
 @everywhere using GPTinf
 @everywhere Ntrain,D=size(Xtrain);
 @everywhere seed=17;
-@everywhere length_scale=3.1772;
-@everywhere sigma=6.35346;
-@everywhere sigma_RBF=0.686602;
 @everywhere XtrainMean=mean(Xtrain,1); 
 @everywhere XtrainStd=zeros(1,D);
 @everywhere for i=1:D
@@ -25,32 +22,49 @@ using DataFrames
 @everywhere ytest = (ytest-ytrainMean)/ytrainStd;
 @everywhere burnin=10;
 @everywhere numiter=50;
-@everywhere Q=16;   #200
+@everywhere Q=200;   #200
 @everywhere n=150;
 @everywhere scale=1;
+
+#find hyperparameters
+#GPNT_hyperparameters(Xtrain,ytrain,n,0.5,0.5,0.5,seed)
+@everywhere length_scale=2.57;
+@everywhere sigma_RBF=3.11;
+@everywhere sigma=0.65;
 @everywhere phitrain=feature(Xtrain,n,length_scale,sigma_RBF,seed,scale);
 @everywhere phitest=feature(Xtest,n,length_scale,sigma_RBF,seed,scale);
 
-#find hyperparameters
-#GPNT_hyperparameters(Xtrain,ytrain,n,1.0,1.0,0.2,seed)
-### plot for whether learning U is helpful
-rvec = convert(Array{Int,1},round(linspace(2,20,5)));
 
+#GP exact using learnt hyperparameters 
+#=using GPexact
+f =  GPexact.SECov(length_scale,sigma_RBF);
+gp = GPexact.GP(0,f,size(Xtrain,2));
+
+tic();yfittrain = GPpost(gp,Xtrain,ytrain,Xtrain,sigma);timer_train = toc();
+RMSEtrain = ytrainStd* (norm(ytrain-yfittrain)/sqrt(Ntrain));
+tic();yfittest = GPpost(gp,Xtrain,ytrain,Xtest,sigma);timer_test = toc();
+RMSEtest = ytrainStd* (norm(ytest-yfittest)/sqrt(N - Ntrain));
+=#
+
+### plot for whether learning U is helpful
+rvec = convert(Array{Int,1},round(linspace(5,50,5)));
 @everywhere function func_w(r::Real)
+	tic();
 	I=samplenz(r,D,Q,seed);
 	w_store,U_store=GPT_w(phitrain,ytrain,sigma,I,r,Q);
 	RMSEtest = ytrainStd*RMSE(w_store,U_store,I,phitest,ytest);
-	return(RMSEtest)
+	return(RMSEtest, toq())
 end
-RMSE_w = pmap(func_w,rvec)
+RMSE_w, timer_w = pmap(func_w,rvec)
 
 @everywhere function func(r::Real)
+	tic();
 	I=samplenz(r,D,Q,seed);
 	w_store,U_store=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter)
 	RMSEtest = ytrainStd*RMSE(w_store,U_store,I,phitest,ytest);
-	return(RMSEtest)
+	return(RMSEtest,toq())
 end
-RMSE_wU = pmap(func,rvec)
+RMSE_wU, timer_wU = pmap(func,rvec)
 
 
 

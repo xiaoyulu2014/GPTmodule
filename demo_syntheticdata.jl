@@ -1,12 +1,12 @@
 using GPTinf
-using PyPlot
+#using PyPlot
 ###generate synthetic data
 N = 500;
 #Xtrain = [linspace(-10,10,N) linspace(-10,10,N)];
 Xtrain = randn(N,3)
 D = size(Xtrain,2)
-r = 10; n = r; Q = r^D; sigma = 0.1; length_scale = 5; seed = 17;
-ytrain = data_simulator(Xtrain,n,r,Q,sigma,length_scale,seed);
+r = 10; n = r; Q = r^D; sigma = 0.1; length_scale = 5.0; seed = 17;sigma_RBF = 1
+ytrain = data_simulator(Xtrain,n,r,Q,sigma,length_scale,sigma_RBF,seed);
 
 XtrainMean=mean(Xtrain,1);
 XtrainStd=zeros(1,D);
@@ -18,9 +18,15 @@ ytrainStd=std(ytrain);
 Xtrain = datawhitening(Xtrain);
 ytrain = datawhitening(ytrain);
 
+### learn hyperparameters using SGLD
+n = 50; r = 10; Q = 100; m = 30; epsw = 0.001; epsU = 0.001; burnin = 5; maxepoch = 5; epslnl = 0.01; epslnSrbf = 0.01; epstau = 0.01; seed = 17
+I=samplenz(r,D,Q,seed);
+GPT_SGLDERM_hyper(Xtrain, ytrain, I, n,r, Q, m, epsw, epsU, burnin, maxepoch,epslnl, epslnSrbf, epstau, seed)
+
+
 
 ###make inference to learn the data
-
+#=
 function yhat(w_store::Array,U_store::Array,I::Array,phitest::Array)
 Ntest=size(phitest,1);
     T=size(w_store,2);
@@ -40,9 +46,7 @@ I=samplenz(r,D,Q,seed);
 w_store,U_store=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter);
 RMSEgibbs = ytrainStd*RMSE(w_store[:,end-burnin1:end],U_store[:,:,:,end-burnin1:end],I,phitrain,ytrain);
 yfitgibbs = yhat(w_store,U_store,I,phitrain);
-
-
-
+=#
 
 #=
 # RMSE  with varying Q and n, fixed r
