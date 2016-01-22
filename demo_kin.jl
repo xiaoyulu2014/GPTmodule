@@ -21,9 +21,9 @@ using DataFrames
 @everywhere Xtest = (Xtest-repmat(XtrainMean,Ntest,1))./repmat(XtrainStd,Ntest,1);
 @everywhere ytest = (ytest-ytrainMean)/ytrainStd;
 @everywhere burnin=10;
-@everywhere numiter=50;
+@everywhere numiter=5;
 @everywhere Q=200;   #200
-@everywhere n=150;
+@everywhere n=100;
 @everywhere scale=1;
 
 #find hyperparameters
@@ -35,6 +35,26 @@ using DataFrames
 @everywhere phitest=feature(Xtest,n,length_scale,sigma_RBF,seed,scale);
 
 
+#RMSE as a function of n
+@everywhere r = 5; @everywhere nvec = convert(Array{Int,1},round(linspace(5,50,5)));
+@everywhere function func(n::Real)
+	tic();
+	I=samplenz(r,D,Q,seed);
+	phitrain=feature(Xtrain,n,length_scale,sigma_RBF,seed,scale);
+	phitest=feature(Xtest,n,length_scale,sigma_RBF,seed,scale);
+	w_store,U_store=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter)
+	RMSEtest = ytrainStd*RMSE(w_store,U_store,I,phitest,ytest);
+	return(RMSEtest,toq())
+end
+res = pmap(func,nvec)
+
+#RMSE_n = [res[i][1] for i=1:5]; timer_n =  [res[i][2] for i=1:5]
+
+#=cd("plot")
+outfile=open("kin_RMSEn","a") #append to file
+	println(outfile,"RMSE_n=",RMSE_n,"timer_n=",timer_n,"Q=",Q,"r=",r,"nvec=",nvec);
+close(outfile)
+=#
 #GP exact using learnt hyperparameters 
 #=using GPexact
 f =  GPexact.SECov(length_scale,sigma_RBF);
@@ -45,6 +65,12 @@ RMSEtrain = ytrainStd* (norm(ytrain-yfittrain)/sqrt(Ntrain));
 tic();yfittest = GPpost(gp,Xtrain,ytrain,Xtest,sigma);timer_test = toc();
 RMSEtest = ytrainStd* (norm(ytest-yfittest)/sqrt(N - Ntrain));
 =#
+
+
+
+
+
+#=
 
 ### plot for whether learning U is helpful
 rvec = convert(Array{Int,1},round(linspace(5,50,5)));
@@ -66,7 +92,7 @@ RMSE_w, timer_w = pmap(func_w,rvec)
 end
 RMSE_wU, timer_wU = pmap(func,rvec)
 
-
+=#
 
 
 
