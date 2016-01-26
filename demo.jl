@@ -10,10 +10,10 @@ using PyPlot
 @everywhere Ntrain=500;
 @everywhere Ntest=500;
 @everywhere seed=17;
-@everywhere length_scale=2.435;
-@everywhere sigma=0.253;
-@everywhere signal_var = sigma^2;
-@everywhere sigma_RBF=0.767;
+#@everywhere length_scale=2.435;
+#@everywhere sigma=0.253;
+#@everywhere signal_var = sigma^2;
+#@everywhere sigma_RBF=0.767;
 @everywhere Xtrain = data[1:Ntrain,1:D];
 @everywhere ytrain = data[1:Ntrain,D+1];
 @everywhere XtrainMean=mean(Xtrain,1); 
@@ -27,8 +27,8 @@ using PyPlot
 @everywhere ytrain=datawhitening(ytrain);
 @everywhere Xtest = (data[Ntrain+1:Ntrain+Ntest,1:D]-repmat(XtrainMean,Ntest,1))./repmat(XtrainStd,Ntest,1);
 @everywhere ytest = (data[Ntrain+1:Ntrain+Ntest,D+1]-ytrainMean)/ytrainStd;
-@everywhere burnin=10;
-@everywhere numiter=50;
+@everywhere burnin=50;
+@everywhere numiter=30;
 @everywhere Q=100;   #200
 @everywhere n=150;
 @everywhere scale=1;
@@ -39,9 +39,115 @@ using PyPlot
 
 
 ###SGLD on hyperparameters
-epsw = 0.0001; epsU = 0.000001; epslnl = 0.0001; epslnSrbf = 0.001; epstau = 0.0001;scale=sqrt(n/(Q^(1/D)))
+
+@everywhere scale = sqrt(n/(Q^(1/D)));
+@everywhere I=samplenz(r,D,Q,seed); 
+@everywhere m = 500;
+@everywhere maxepoch = 10;
+@everywhere alpha = 0.9;
+##tuning epsw, epsU, epsl, epsSrbf, epsSignalVar
+@everywhere t=Iterators.product(3:4,6:8)
+@everywhere myt=Array(Any,6);
+@everywhere it=1;
+@everywhere for prod in t
+	myt[it]=prod;
+        it+=1;
+        end
+#@everywhere length_scale,sigma_RBF,signal_var = exp(randn(3))
+
+@everywhere hyp_init = [1,1,0.5]
+@everywhere length_scale=1;
+@everywhere signal_var = 0.5;
+@everywhere sigma_RBF=1;
+@everywhere phitrain0=feature(Xtrain,n,length_scale,sigma_RBF,seed,scale);
+@everywhere phitest0=feature(Xtest,n,length_scale,sigma_RBF,seed,scale);
+
+testRMSE_adam = SharedArray(Float64, maxepoch,25);testRMSE = SharedArray(Float64, maxepoch,25)
+@sync @parallel for iter = 1:6
+    i,j=myt[iter];
+    epsw=float(string("1e-",i)); epsU=float(string("1e-",j));
+    w_store_hyper,U_store_hyper,l_store, SigmaRBF_store, SignalVar_store=GPTinf.GPT_SGLDERM_adam(Xtrain, ytrain, I, n,r, Q, m, epsw,epsU,burnin,maxepoch,seed,hyp_init);
+    w_store,U_store=GPT_SGLDERM(phitrain0, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
+   # testRMSE=Array(Float64,maxepoch)
+    numbatches=int(ceil(Ntrain/m))
+    for epoch=1:maxepoch
+	phitest = feature(Xtest,n,l_store[epoch],SigmaRBF_store[epoch],seed,scale)
+        testpred_adam=pred(w_store_hyper[:,epoch],U_store_hyper[:,:,:,epoch],I,phitest)
+        testRMSE_adam[epoch,iter]=ytrainStd*norm(ytest-testpred_adam)/sqrt(Ntest)
+ 	testpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest0)
+        testRMSE[epoch,iter]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+    end
+println("r=",r,";minRMSE=",minimum(testRMSE[:,iter]),";minepoch=",indmin(testRMSE[:,iter]),";minRMSE_adam=",minimum(testRMSE_adam[:,iter]),";epsw=",epsw,";epsU=",epsU);
+end
+
+    T=size(w_store_hyper,2);
+meanfhat= @parallel (+) for i=1:T
+	phitest = feature(Xtest,n,l_store[i],SigmaRBF_store[i],seed,scale)
+	pred(w_store_hyper[:,i],U_store_hyper[:,:,:,i],I,phitest);
+	end
+meanfhat=meanfhat/T;
+norm(ytest-meanfhat)/sqrt(Ntest);
+
+   for epoch=1:maxepoch
+	phitest = feature(Xtest,n,l_store[epoch],SigmaRBF_store[epoch],seed,scale)
+        testpred_adam=pred(w_store_hyper[:,epoch],U_store_hyper[:,:,:,epoch],I,phitest)
+        testRMSE_adam[epoch]=ytrainStd*norm(ytest-testpred_adam)/sqrt(Ntest)
+    end
 
 
+
+
+
+
+
+
+
+
+##SGLD
+#@everywhere length_scale= 2.435;
+#@everywhere sigma=0.253;
+#@everywhere signal_var = sigma^2;
+#@everywhere sigma_RBF= 0.767;
+
+#=
+@everywhere length_scale,sigma_RBF,signal_var = exp(randn(3))
+@everywhere scale = sqrt(n/(Q^(1/D)));
+@everywhere phitrain=feature(Xtrain,n,length_scale,sigma_RBF,seed,scale);
+@everywhere phitest=feature(Xtest,n,length_scale,sigma_RBF,seed,scale);
+@everywhere I=samplenz(r,D,Q,seed); 
+@everywhere m = 50;
+@everywhere maxepoch = 100;
+
+
+@everywhere t=Iterators.product(3:7,4:8)
+@everywhere myt=Array(Any,25);
+@everywhere it=1;
+@everywhere for prod in t
+	myt[it]=prod;
+        it+=1;
+        end
+
+@sync @parallel for Tuple in myt
+    i,j=Tuple;
+    epsw=float(string("1e-",i)); epsU=float(string("1e-",j));
+    w_store,U_store=GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
+    testRMSE=Array(Float64,maxepoch)
+    numbatches=int(ceil(Ntrain/m))
+    for epoch=1:maxepoch
+        testpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest)
+        testRMSE[epoch]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+    end
+    
+println("r=",r,";minRMSE=",minimum(testRMSE),";minepoch=",indmin(testRMSE),";epsw=",epsw,";epsU=",epsU,";burnin=",burnin,";maxepoch=",maxepoch);
+end
+
+=#
+
+
+
+#RMSESGLD = ytrainStd*RMSE(w_storeSGLD[:,end-burnin:end],U_storeSGLD[:,:,:,end-burnin:end],I,phitest,ytest);
+#RMSEvec_SGLD = ytrainStd*RMSESGLDvec(w_storeSGLD,U_storeSGLD,I,phitest,ytest);
+#=
 @everywhere function yhat_func(w_store::Array,U_store::Array,I::Array,X::Array,l_store::Array,SigmaRBF_store::Array)
     Ntest=size(X,1);
     T=size(w_store,2);
@@ -66,90 +172,7 @@ end
      end
 return RMSEvec
 end
-
-
-@everywhere scale = sqrt(n/(Q^(1/D)));
-@everywhere I=samplenz(r,D,Q,seed); 
-@everywhere m = 50;
-@everywhere maxepoch = 10;
-##tuning epsw, epsU, epsl, epsSrbf, epsSignalVar
-@everywhere t=Iterators.product(3:4,6:8,3:5,3:5,3:5)
-@everywhere myt=Array(Any,162);
-@everywhere it=1;
-@everywhere for prod in t
-	myt[it]=prod;
-        it+=1;
-        end
-
-@sync @parallel for Tuple in myt
-    i,j,a,b,c=Tuple;
-    epsw=float(string("1e-",i)); epsU=float(string("1e-",j));epslnl=float(string("1e-",a));epslnSrbf=float(string("1e-",b));epstau=float(string("1e-",c))
-    w_store_hyper,U_store_hyper,l_store, SigmaRBF_store, SignalVar_store=GPT_SGLDERM_hyper(
-							Xtrain, ytrain, I, n,r, Q, m, epsw, epsU, burnin, maxepoch,epslnl, epslnSrbf, epstau, seed);
-    testRMSE=Array(Float64,maxepoch)
-    numbatches=int(ceil(Ntrain/m))
-    for epoch=1:maxepoch
-	phitest = feature(Xtest,n,l_store[epoch],SigmaRBF_store[epoch],seed,scale)
-        testpred=pred(w_store_hyper[:,epoch],U_store_hyper[:,:,:,epoch],I,phitest)
-        testRMSE[epoch]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
-    end
-    
-println("r=",r,";minRMSE=",minimum(testRMSE),";minepoch=",indmin(testRMSE),";epsw=",epsw,";epsU=",epsU,
-				" ;epslnl=",epslnl," ;epslnSrbf=",epslnSrbf, " ;epstau=", epstau);
-end
-
-
-w_store_hyper,U_store_hyper,l_store, SigmaRBF_store, SignalVar_store= GPT_SGLDERM_hyper(Xtrain, ytrain, I, n,r, Q, m, epsw, epsU, burnin, maxepoch,epslnl, epslnSrbf, epstau, seed);
-RMSEvec_hyper = ytrainStd*RMSE_func(w_store_hyper,U_store_hyper,I,Xtest,ytest,l_store,SigmaRBF_store)
-yfit_hyper = yhat_func(w_store_hyper,U_store_hyper,I,Xtest,l_store, SigmaRBF_store);
-RMSE_hyper = ytrainStd*norm(yfit_hyper-ytest)/sqrt(size(ytest,1))
-
-
-
-##SGLD
-#@everywhere length_scale=2.435;
-#@everywhere sigma=0.253;
-#@everywhere signal_var = sigma^2;
-#@everywhere sigma_RBF=0.767;
-@everywhere using Distributions
-@everywhere length_scale = exp(randn(1))[1];  @everywhere sigma_RBF = exp(randn(1))[1]; @everywhere tau = rand(Gamma(1,1))[1];  @everywhere signal_var = 1/tau;
-@everywhere scale = sqrt(n/(Q^(1/D)));
-@everywhere phitrain=feature(Xtrain,n,length_scale,sigma_RBF,seed,scale);
-@everywhere phitest=feature(Xtest,n,length_scale,sigma_RBF,seed,scale);
-@everywhere I=samplenz(r,D,Q,seed); 
-@everywhere m = 50;
-@everywhere maxepoch = 10;
-##tuning epsw and epsU
-
-@everywhere t=Iterators.product(3:6,5:8)
-@everywhere myt=Array(Any,16);
-@everywhere it=1;
-@everywhere for prod in t
-	myt[it]=prod;
-        it+=1;
-        end
-
-@sync @parallel for Tuple in myt
-    i,j=Tuple;
-    epsw=float(string("1e-",i)); epsU=float(string("1e-",j));
-    w_store,U_store=GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
-    testRMSE=Array(Float64,maxepoch)
-    numbatches=int(ceil(Ntrain/m))
-    for epoch=1:maxepoch
-        testpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest)
-        testRMSE[epoch]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
-    end
-    
-println("r=",r,";minRMSE=",minimum(testRMSE),";minepoch=",indmin(testRMSE),";epsw=",epsw,";epsU=",epsU,";burnin=",burnin,";maxepoch=",maxepoch);
-end
-
-
-
-
-
-#RMSESGLD = ytrainStd*RMSE(w_storeSGLD[:,end-burnin:end],U_storeSGLD[:,:,:,end-burnin:end],I,phitest,ytest);
-#RMSEvec_SGLD = ytrainStd*RMSESGLDvec(w_storeSGLD,U_storeSGLD,I,phitest,ytest);
-
+=#
 
 
 

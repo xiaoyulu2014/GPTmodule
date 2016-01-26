@@ -728,11 +728,7 @@ function GPT_SGLDERM_probit(phi::Array, y::Array, I::Array, r::Integer, Q::Integ
 	    
             # SGLD step on w
             w[:]+=epsw*gradw/2 +sqrt(epsw)*randn(Q)
-	    #if batch==1
-	    #	println("mean epsgradw_half=",mean(epsw*gradw/2)," std =",std(epsw*gradw/2))
-	    #	println("meansqrtepsgradU_half=",mean(sqrt(epsU)*gradU/2), " std=",std(sqrt(epsU)*gradU/2))
-	    #end
-            # SGLDERM step on U
+
             for k=1:D
                 mom=proj(U[:,:,k],sqrt(epsU)*gradU[:,:,k]/2+randn(n,r))
                 U[:,:,k]=geod(U[:,:,k],mom,sqrt(epsU));
@@ -873,6 +869,142 @@ end
 
 
 #SGLD on Tucker Model with Stiefel Manifold, learning hyperparameters as well
+function GPT_SGLDERM_adam(X::Array, y::Array, I::Array, n::Integer,r::Integer, Q::Integer, m::Integer, epsw::Real, epsU::Real, burnin::Integer, maxepoch::Integer,seed::Integer,hyp_init::Array)
+    sigma_w=1;
+    sigma_hyper = [1,1,1];
+    beta_1,beta_2,alpha0,epsilon = 0.9,0.999,0.01,0.00000001
+    N,D=size(X)
+    scale=sqrt(n/(Q^(1/D)))
+    length_scale,sigma_RBF,signal_var = hyp_init #ones(3); #exp(sqrt(sigma_hyper).*randn(3))
+    phi=feature(X,n,length_scale,sigma_RBF,seed,scale);
+    n,D,N=size(phi)
+    numbatches=int(ceil(N/m))
+ 
+    # initialise w,U^(k)
+    w_store=Array(Float64,Q,maxepoch*numbatches)
+    U_store=Array(Float64,n,r,D,maxepoch*numbatches)
+    w=sigma_w*randn(Q)
+
+    U=Array(Float64,n,r,D)
+    for k=1:D
+        Z=randn(r,n)
+        U[:,:,k]=transpose(\(sqrtm(Z*Z'),Z)) #sample uniformly from V_{n,r}
+    end
+
+    # initialise w,U^(k)
+    w_store=Array(Float64,Q,maxepoch*numbatches)
+    U_store=Array(Float64,n,r,D,maxepoch*numbatches) 
+    l_store=Array(Float64,maxepoch*numbatches)
+    SigmaRBF_store=Array(Float64,maxepoch*numbatches)
+    SignalVar_store=Array(Float64,maxepoch*numbatches)
+    w=sigma_w*randn(Q)
+    U=Array(Float64,n,r,D)
+    for k=1:D
+        Z=randn(r,n)
+        U[:,:,k]=transpose(\(sqrtm(Z*Z'),Z)) #sample uniformly from V_{n,r}
+    end
+
+    #initialise 1st and 2nd moment vectors for ADAM
+    moment1,moment2 = zeros(3)  #moments for w and hyperparameters
+
+    for epoch=1:(burnin+maxepoch)
+        #randomly permute training data and divide into mini_batches of size m
+       perm=randperm(N)
+      #  Xperm = X[perm,:];  yperm=y[perm];
+        phi=phi[:,:,perm]; yperm=y[perm];
+     
+
+        # run SGLD on w and SGLDERM on U
+        for batch=1:numbatches
+            t = (epoch-1)*numbatches+batch
+            alpha = alpha0 * sqrt(1-beta_2^t) / (1-beta_1^t)
+       # phi=feature(Xperm,n,length_scale,sigma_RBF,seed,scale);
+            # random samples for the stochastic gradient
+            idx=(m*(batch-1)+1):min(m*batch,N)
+            phi_batch=phi[:,:,idx]; y_batch=yperm[idx];
+            batch_size=length(idx) #this is m except for last batch
+
+            # compute <phi^(k)(x_i),U^(k)_{.l}> for all k,l,batch and store in temp
+            temp=phidotU(U,phi_batch)
+
+	    # compute V st V[q,i]=prod_{k=1 to D}(temp[k,I[q,k],i])
+            V=computeV(temp,I)
+	    
+            # compute fhat where fhat[i]=V[:,i]'w
+            fhat=computefhat(V,w)
+
+            # now can compute negative gradw, the stochastic gradient of log post wrt w
+            gradw= (N/batch_size)*V*(y_batch-fhat)/signal_var-w/(sigma_w^2)
+
+            # compute U_phi[q,i,k]=expression in big brackets in (11)
+            U_phi=computeU_phi(V,temp,I)
+            
+            # compute a_l^(k)(x_i) for l=1,...,r k=1,..,D and store in A
+            A=computeA(U_phi,w,I,r)
+            
+            # compute Psi as in (12)
+            Psi=computePsi(A,phi_batch)
+            
+            # can now compute negative gradU where gradU[:,:,k]=stochastic gradient of log post wrt U^(k)
+            gradU=Array(Float64,n,r,D)
+            for k=1:D
+                gradU[:,:,k]=reshape((N/batch_size)*Psi[:,:,k]*(y_batch-fhat)/signal_var,n,r)
+            end
+
+            ## SGLD on length scale and sigma_RBF
+		theta = [log(length_scale),log(sigma_RBF),log(signal_var)];
+		#write log likelihood as a function of log length scale
+		#=function lik_theta(theta::Vector,)
+			length_scale, sigma_RBF = exp(theta);
+			phi = feature(Xperm,n,length_scale,sigma_RBF,seed,scale);
+			phi_batch=phi[:,:,idx]
+			temp = phidotU(U,phi_batch);
+			V = computeV(temp,I)
+			fhat=computefhat(V,w)
+			return(sum((y_batch-fhat).^2))
+		end
+
+		g = ForwardDiff.gradient(lik_theta)(theta)=#
+                gradl= 0 #-( (N/batch_size)*g[1]/(2*signal_var) + theta[1]/(sigma_hyper[1]^2) )
+		gradrbf= 0 #-( (N/batch_size)*g[2]/(2*signal_var) + theta[2]/(sigma_hyper[2]^2) )
+                gradtau= 0 #(N/batch_size)*exp(-theta[3])*sum((y_batch-fhat).^2)/2 - N/2 - theta[3]/(sigma_hyper[3]^2) 
+
+
+      	    grad_hyper = [gradl,gradrbf,gradtau]
+            moment1 = beta_1*moment1 + (1-beta_1)*grad_hyper
+            moment2 = beta_2*moment2 + (1-beta_2)*grad_hyper.^2
+ 	    # SGLD step on w
+            w[:]+=epsw*gradw/2 +sqrt(epsw)*randn(Q)
+            # SGLDERM step on U
+            for k=1:D
+                mom=proj(U[:,:,k],sqrt(epsU)*gradU[:,:,k]/2+randn(n,r))
+                U[:,:,k]=geod(U[:,:,k],mom,sqrt(epsU));
+                if U[:,:,k]==zeros(n,r) 
+                    return zeros(Q,maxepoch*numbatches),zeros(n,r,D,maxepoch*numbatches)
+                end
+            end
+		theta += alpha*moment1./(sqrt(moment2) + epsilon)
+
+		length_scale,sigma_RBF,signal_var = exp(theta)
+		#println("grad_hyper[1] = ", grad_hyper[1], "; update[1] = ", exp(alpha*moment1./(sqrt(moment2) + epsilon)[1]))
+	    if epoch>burnin
+	        w_store[:,((epoch-burnin)-1)*numbatches+batch]=w
+	        U_store[:,:,:,((epoch-burnin)-1)*numbatches+batch]=U
+                l_store[((epoch-burnin)-1)*numbatches+batch] = length_scale
+		SigmaRBF_store[((epoch-burnin)-1)*numbatches+batch]=sigma_RBF
+		SignalVar_store[((epoch-burnin)-1)*numbatches+batch]=signal_var
+	    end
+		
+        end
+    end
+    return w_store,U_store, l_store, SigmaRBF_store, SignalVar_store
+end
+	
+
+
+
+
+#SGLD on Tucker Model with Stiefel Manifold, learning hyperparameters as well
 function GPT_SGLDERM_hyper(X::Array, y::Array, I::Array, n::Integer,r::Integer, Q::Integer, m::Integer, epsw::Real, epsU::Real, burnin::Integer, maxepoch::Integer,
 				epslnl::Real, epslnSrbf::Real, epstau::Real, seed::Integer)
     # phi is the D by n by N array of features where phi[k,:,i]=phi^(k)(x_i)
@@ -882,10 +1014,10 @@ function GPT_SGLDERM_hyper(X::Array, y::Array, I::Array, n::Integer,r::Integer, 
     sigma_w=1;
     sigma_lnl = 1;
     sigma_lnSrbf = 1;
-    tau_a = 1; tau_b = 1;
+    sigma_lnSvar = 1;
     N,D=size(X)
     scale=sqrt(n/(Q^(1/D)))
-    length_scale = exp(randn(sigma_lnl))[1]; sigma_RBF = exp(randn(sigma_lnSrbf))[1]; tau = rand(Gamma(tau_a,tau_b))[1]; signal_var = 1/tau;
+    length_scale = exp(randn(sigma_lnl))[1]; sigma_RBF = exp(randn(sigma_lnSrbf))[1]; signal_var = var(y);
     phi=feature(X,n,length_scale,sigma_RBF,seed,scale);
     n,D,N=size(phi)
     numbatches=int(ceil(N/m))
@@ -945,23 +1077,9 @@ function GPT_SGLDERM_hyper(X::Array, y::Array, I::Array, n::Integer,r::Integer, 
                 gradU[:,:,k]=reshape((N/batch_size)*Psi[:,:,k]*(y_batch-fhat)/signal_var,n,r)
             end
 	    
-            # SGLD step on w
-            w[:]+=epsw*gradw/2 +sqrt(epsw)*randn(Q)
-	    #if batch==1
-	    #	println("mean epsgradw_half=",mean(epsw*gradw/2)," std =",std(epsw*gradw/2))
-	    #	println("meansqrtepsgradU_half=",mean(sqrt(epsU)*gradU/2), " std=",std(sqrt(epsU)*gradU/2))
-	    #end
-            # SGLDERM step on U
-            for k=1:D
-                mom=proj(U[:,:,k],sqrt(epsU)*gradU[:,:,k]/2+randn(n,r))
-                U[:,:,k]=geod(U[:,:,k],mom,sqrt(epsU));
-                if U[:,:,k]==zeros(n,r) #if NaN appears while evaluating G
-                    return zeros(Q,maxepoch*numbatches),zeros(n,r,D,maxepoch*numbatches)
-                end
-            end
-
-	       ## SGLD on length scale and sigma_RBF
-		theta = [log(length_scale),log(sigma_RBF)];
+ 
+            ## SGLD on length scale and sigma_RBF
+		theta = [log(length_scale),log(sigma_RBF),log(signal_var)];
 		#write log likelihood as a function of log length scale
 		function lik_theta(theta::Vector,)
 			length_scale, sigma_RBF = exp(theta);
@@ -974,22 +1092,25 @@ function GPT_SGLDERM_hyper(X::Array, y::Array, I::Array, n::Integer,r::Integer, 
 		end
 
 		g = ForwardDiff.gradient(lik_theta)(theta)
+
+ 	    # SGLD step on w
+            w[:]+=epsw*gradw/2 +sqrt(epsw)*randn(Q)
+            # SGLDERM step on U
+            for k=1:D
+                mom=proj(U[:,:,k],sqrt(epsU)*gradU[:,:,k]/2+randn(n,r))
+                U[:,:,k]=geod(U[:,:,k],mom,sqrt(epsU));
+                if U[:,:,k]==zeros(n,r) #if NaN appears while evaluating G
+                    return zeros(Q,maxepoch*numbatches),zeros(n,r,D,maxepoch*numbatches)
+                end
+            end
+
                 gradl=-(N/batch_size)*g[1]/(2*signal_var)-theta[1]/(sigma_lnl^2)
 		theta[1] += epslnl*gradl/2 + sqrt(epslnl)*randn(1)[1]
-                length_scale = exp(theta[1][1])
 		gradrbf=-(N/batch_size)*g[2]/(2*signal_var)-theta[2]/(sigma_lnSrbf^2)
 		theta[2] += epslnSrbf*gradrbf/2 + sqrt(epslnSrbf)*randn(1)[1]
-                sigma_RBF = exp(theta[2][1])
-		
-               #SGLD on precision
-		tau = 1/signal_var
-                temp=phidotU(U,phi_batch)
-                V=computeV(temp,I)
-                fhat=computefhat(V,w)
-
-                gradtau=-(N/batch_size)*tau*sum(y_batch-fhat)+(tau_a-1)*log(tau) - tau/tau_b
-		tau += epstau*gradtau/2 + sqrt(epstau)*randn(1)[1]
-		signal_var = 1/tau
+                gradtau=(N/batch_size)*exp(-theta[3])*sum((y_batch-fhat).^2)/2 - N/2 -theta[3]/(sigma_lnSvar^2)
+		theta[3] += epstau*gradtau/2 + sqrt(epstau)*randn(1)[1]
+		length_scale,sigma_RBF,signal_var = exp(theta)
 
 	    if epoch>burnin
 	        w_store[:,((epoch-burnin)-1)*numbatches+batch]=w
@@ -998,12 +1119,10 @@ function GPT_SGLDERM_hyper(X::Array, y::Array, I::Array, n::Integer,r::Integer, 
 		SigmaRBF_store[((epoch-burnin)-1)*numbatches+batch]=sigma_RBF
 		SignalVar_store[((epoch-burnin)-1)*numbatches+batch]=signal_var
 	    end
+		#tmp = ((0.01+(epoch-1)*numbatches+batch)/(0.01+(epoch-1)*numbatches+batch-1))^(-0.5)
+		#epslnl *= tmp; epslnSrbf*= tmp; epstau*= tmp
         end
     end
     return w_store,U_store, l_store, SigmaRBF_store, SignalVar_store
 end
 end
-
-
-
-		
