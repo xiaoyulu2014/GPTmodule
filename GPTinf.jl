@@ -872,14 +872,14 @@ end
 function GPT_SGLDERM_adam(X::Array, y::Array, I::Array, n::Integer,r::Integer, Q::Integer, m::Integer, epsw::Real, epsU::Real, burnin::Integer, maxepoch::Integer,seed::Integer,hyp_init::Array)
     sigma_w=1;
     sigma_hyper = [1,1,1];
-    beta_1,beta_2,alpha0,epsilon = 0.9,0.999,0.01,0.00000001
+    beta_1,beta_2,alpha0,epsilon = 0.9,0.999,0.1,0.00000001
     N,D=size(X)
-    scale=sqrt(n/(Q^(1/D)))
+    scale=sqrt(n/(Q^(1/D)))  
     length_scale,sigma_RBF,signal_var = hyp_init #ones(3); #exp(sqrt(sigma_hyper).*randn(3))
     phi=feature(X,n,length_scale,sigma_RBF,seed,scale);
     n,D,N=size(phi)
     numbatches=int(ceil(N/m))
- 
+   
     # initialise w,U^(k)
     w_store=Array(Float64,Q,maxepoch*numbatches)
     U_store=Array(Float64,n,r,D,maxepoch*numbatches)
@@ -897,28 +897,20 @@ function GPT_SGLDERM_adam(X::Array, y::Array, I::Array, n::Integer,r::Integer, Q
     l_store=Array(Float64,maxepoch*numbatches)
     SigmaRBF_store=Array(Float64,maxepoch*numbatches)
     SignalVar_store=Array(Float64,maxepoch*numbatches)
-    w=sigma_w*randn(Q)
-    U=Array(Float64,n,r,D)
-    for k=1:D
-        Z=randn(r,n)
-        U[:,:,k]=transpose(\(sqrtm(Z*Z'),Z)) #sample uniformly from V_{n,r}
-    end
-
+   
     #initialise 1st and 2nd moment vectors for ADAM
     moment1,moment2 = zeros(3)  #moments for w and hyperparameters
 
     for epoch=1:(burnin+maxepoch)
         #randomly permute training data and divide into mini_batches of size m
-       perm=randperm(N)
-      #  Xperm = X[perm,:];  yperm=y[perm];
-        phi=phi[:,:,perm]; yperm=y[perm];
-     
-
+        perm=randperm(N)
+        Xperm = X[perm,:];  yperm=y[perm];
+       
         # run SGLD on w and SGLDERM on U
         for batch=1:numbatches
             t = (epoch-1)*numbatches+batch
             alpha = alpha0 * sqrt(1-beta_2^t) / (1-beta_1^t)
-       # phi=feature(Xperm,n,length_scale,sigma_RBF,seed,scale);
+            phi=feature(Xperm,n,length_scale,sigma_RBF,seed,scale);
             # random samples for the stochastic gradient
             idx=(m*(batch-1)+1):min(m*batch,N)
             phi_batch=phi[:,:,idx]; y_batch=yperm[idx];
@@ -954,7 +946,7 @@ function GPT_SGLDERM_adam(X::Array, y::Array, I::Array, n::Integer,r::Integer, Q
             ## SGLD on length scale and sigma_RBF
 		theta = [log(length_scale),log(sigma_RBF),log(signal_var)];
 		#write log likelihood as a function of log length scale
-		#=function lik_theta(theta::Vector,)
+		function lik_theta(theta::Vector,)
 			length_scale, sigma_RBF = exp(theta);
 			phi = feature(Xperm,n,length_scale,sigma_RBF,seed,scale);
 			phi_batch=phi[:,:,idx]
@@ -964,10 +956,10 @@ function GPT_SGLDERM_adam(X::Array, y::Array, I::Array, n::Integer,r::Integer, Q
 			return(sum((y_batch-fhat).^2))
 		end
 
-		g = ForwardDiff.gradient(lik_theta)(theta)=#
-                gradl= 0 #-( (N/batch_size)*g[1]/(2*signal_var) + theta[1]/(sigma_hyper[1]^2) )
-		gradrbf= 0 #-( (N/batch_size)*g[2]/(2*signal_var) + theta[2]/(sigma_hyper[2]^2) )
-                gradtau= 0 #(N/batch_size)*exp(-theta[3])*sum((y_batch-fhat).^2)/2 - N/2 - theta[3]/(sigma_hyper[3]^2) 
+		g = ForwardDiff.gradient(lik_theta)(theta)
+                gradl=  -( (N/batch_size)*g[1]/(2*signal_var) + theta[1]/(sigma_hyper[1]^2) )
+		gradrbf=  -( (N/batch_size)*g[2]/(2*signal_var) + theta[2]/(sigma_hyper[2]^2) )
+                gradtau= (N/batch_size)*exp(-theta[3])*sum((y_batch-fhat).^2)/2 - N/2 - theta[3]/(sigma_hyper[3]^2) 
 
 
       	    grad_hyper = [gradl,gradrbf,gradtau]

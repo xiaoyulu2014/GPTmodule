@@ -27,11 +27,11 @@ using PyPlot
 @everywhere ytrain=datawhitening(ytrain);
 @everywhere Xtest = (data[Ntrain+1:Ntrain+Ntest,1:D]-repmat(XtrainMean,Ntest,1))./repmat(XtrainStd,Ntest,1);
 @everywhere ytest = (data[Ntrain+1:Ntrain+Ntest,D+1]-ytrainMean)/ytrainStd;
-@everywhere burnin=50;
+@everywhere burnin=10;
 @everywhere numiter=30;
 @everywhere Q=100;   #200
 @everywhere n=150;
-@everywhere scale=1;
+#@everywhere scale=1;
 @everywhere r = 30;
 
 #GPNT_hyperparameters(Xtrain,ytrain,n,1.0,1.0,0.2,seed)
@@ -44,26 +44,22 @@ using PyPlot
 @everywhere I=samplenz(r,D,Q,seed); 
 @everywhere m = 500;
 @everywhere maxepoch = 10;
-@everywhere alpha = 0.9;
 ##tuning epsw, epsU, epsl, epsSrbf, epsSignalVar
-@everywhere t=Iterators.product(3:4,6:8)
-@everywhere myt=Array(Any,6);
+@everywhere t=Iterators.product(3:5,6:8)
+@everywhere myt=Array(Any,9);
 @everywhere it=1;
 @everywhere for prod in t
 	myt[it]=prod;
         it+=1;
         end
-#@everywhere length_scale,sigma_RBF,signal_var = exp(randn(3))
 
 @everywhere hyp_init = [1,1,0.5]
-@everywhere length_scale=1;
-@everywhere signal_var = 0.5;
-@everywhere sigma_RBF=1;
+@everywhere length_scale, signal_var,sigma_RBF = hyp_init;
 @everywhere phitrain0=feature(Xtrain,n,length_scale,sigma_RBF,seed,scale);
 @everywhere phitest0=feature(Xtest,n,length_scale,sigma_RBF,seed,scale);
 
 testRMSE_adam = SharedArray(Float64, maxepoch,25);testRMSE = SharedArray(Float64, maxepoch,25)
-@sync @parallel for iter = 1:6
+@sync @parallel for iter = 1:9
     i,j=myt[iter];
     epsw=float(string("1e-",i)); epsU=float(string("1e-",j));
     w_store_hyper,U_store_hyper,l_store, SigmaRBF_store, SignalVar_store=GPTinf.GPT_SGLDERM_adam(Xtrain, ytrain, I, n,r, Q, m, epsw,epsU,burnin,maxepoch,seed,hyp_init);
@@ -79,28 +75,6 @@ testRMSE_adam = SharedArray(Float64, maxepoch,25);testRMSE = SharedArray(Float64
     end
 println("r=",r,";minRMSE=",minimum(testRMSE[:,iter]),";minepoch=",indmin(testRMSE[:,iter]),";minRMSE_adam=",minimum(testRMSE_adam[:,iter]),";epsw=",epsw,";epsU=",epsU);
 end
-
-    T=size(w_store_hyper,2);
-meanfhat= @parallel (+) for i=1:T
-	phitest = feature(Xtest,n,l_store[i],SigmaRBF_store[i],seed,scale)
-	pred(w_store_hyper[:,i],U_store_hyper[:,:,:,i],I,phitest);
-	end
-meanfhat=meanfhat/T;
-norm(ytest-meanfhat)/sqrt(Ntest);
-
-   for epoch=1:maxepoch
-	phitest = feature(Xtest,n,l_store[epoch],SigmaRBF_store[epoch],seed,scale)
-        testpred_adam=pred(w_store_hyper[:,epoch],U_store_hyper[:,:,:,epoch],I,phitest)
-        testRMSE_adam[epoch]=ytrainStd*norm(ytest-testpred_adam)/sqrt(Ntest)
-    end
-
-
-
-
-
-
-
-
 
 
 ##SGLD
