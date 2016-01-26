@@ -27,7 +27,7 @@ using PyPlot
 @everywhere ytrain=datawhitening(ytrain);
 @everywhere Xtest = (data[Ntrain+1:Ntrain+Ntest,1:D]-repmat(XtrainMean,Ntest,1))./repmat(XtrainStd,Ntest,1);
 @everywhere ytest = (data[Ntrain+1:Ntrain+Ntest,D+1]-ytrainMean)/ytrainStd;
-@everywhere burnin=10;
+@everywhere burnin=50;
 @everywhere numiter=30;
 @everywhere Q=100;   #200
 @everywhere n=150;
@@ -42,8 +42,8 @@ using PyPlot
 
 @everywhere scale = sqrt(n/(Q^(1/D)));
 @everywhere I=samplenz(r,D,Q,seed); 
-@everywhere m = 500;
-@everywhere maxepoch = 10;
+@everywhere m = 50;
+@everywhere maxepoch = 100;
 ##tuning epsw, epsU, epsl, epsSrbf, epsSignalVar
 @everywhere t=Iterators.product(3:5,6:8)
 @everywhere myt=Array(Any,9);
