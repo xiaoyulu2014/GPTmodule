@@ -9,7 +9,7 @@ using PyPlot
 @everywhere D=4;
 @everywhere Ntrain=500;
 @everywhere Ntest=500;
-@everywhere seed=17;
+@everywhere seed=123;
 #@everywhere length_scale=2.435;
 #@everywhere sigma=0.253;
 #@everywhere signal_var = sigma^2;
@@ -43,7 +43,7 @@ using PyPlot
 @everywhere scale = sqrt(n/(Q^(1/D)));
 @everywhere I=samplenz(r,D,Q,seed); 
 @everywhere m = 50;
-@everywhere maxepoch = 100;
+@everywhere maxepoch = 10;
 ##tuning epsw, epsU, epsl, epsSrbf, epsSignalVar
 @everywhere t=Iterators.product(3:5,6:8)
 @everywhere myt=Array(Any,9);
@@ -53,12 +53,12 @@ using PyPlot
         it+=1;
         end
 
-@everywhere hyp_init = [1,1,0.5]
-@everywhere length_scale, signal_var,sigma_RBF = hyp_init;
+@everywhere hyp_init = [1,1,0.05]
+@everywhere length_scale,sigma_RBF,signal_var = hyp_init;
 @everywhere phitrain0=feature(Xtrain,n,length_scale,sigma_RBF,seed,scale);
 @everywhere phitest0=feature(Xtest,n,length_scale,sigma_RBF,seed,scale);
 
-testRMSE_adam = SharedArray(Float64, maxepoch,25);testRMSE = SharedArray(Float64, maxepoch,25)
+testRMSE_adam = SharedArray(Float64, maxepoch,9);testRMSE = SharedArray(Float64, maxepoch,9)
 @sync @parallel for iter = 1:9
     i,j=myt[iter];
     epsw=float(string("1e-",i)); epsU=float(string("1e-",j));
@@ -107,7 +107,7 @@ end
     w_store,U_store=GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
     testRMSE=Array(Float64,maxepoch)
     numbatches=int(ceil(Ntrain/m))
-    for epoch=1:maxepoch
+    for epoch=1:maxepoch*numbatches
         testpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest)
         testRMSE[epoch]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
     end

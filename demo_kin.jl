@@ -48,6 +48,12 @@ using DataFrames
 end
 res = pmap(func,nvec)
 
+
+
+
+
+
+
 #RMSE_n = [res[i][1] for i=1:5]; timer_n =  [res[i][2] for i=1:5]
 
 #=cd("plot")
