@@ -43,6 +43,19 @@ function feature(X::Array,n::Integer,length_scale::Real,sigma_RBF::Real,seed::In
     return scale*(sigma_RBF)^(1/D)*sqrt(2/n)*phi
 end
 
+function feature1(X::Array,n::Integer,length_scale::Real,sigma_RBF::Real,scale::Real,Z::Array,b::Array)     
+    N,D=size(X)
+    phi=Array(Float64,n,D,N)
+     for i=1:N
+	for k=1:D
+	    for j=1:n
+		phi[j,k,i]=cos(X[i,k]*Z[j,k]/length_scale+b[j,k])
+	    end
+	end
+    end
+    return scale*(sigma_RBF)^(1/D)*sqrt(2/n)*phi
+end
+
 #extract features from tensor decomp of each row of X
 function feature_tilde(X::Array,n::Integer,length_scale::Real,sigma_RBF::Real,seed::Integer,scale::Real)    
     N,D=size(X)
@@ -50,6 +63,19 @@ function feature_tilde(X::Array,n::Integer,length_scale::Real,sigma_RBF::Real,se
     srand(seed)
     Z=randn(n,D)
     b=rand(n,D)*2*pi
+    for i=1:N
+	for k=1:D
+	    for j=1:n
+		phi[j,k,i]=sin(X[i,k]*Z[j,k]/length_scale+b[j,k]) * X[i,k]*Z[j,k]/(length_scale^2)
+	    end
+	end
+    end
+    return scale*(sigma_RBF)^(1/D)*sqrt(2/n)*phi
+end
+
+function feature_tilde1(X::Array,n::Integer,length_scale::Real,sigma_RBF::Real,scale::Real,Z::Array,b::Array)    
+    N,D=size(X)
+    phi=Array(Float64,n,D,N)
     for i=1:N
 	for k=1:D
 	    for j=1:n
@@ -731,7 +757,7 @@ function GPT_SGLDERM_probit(phi::Array, y::Array, I::Array, r::Integer, Q::Integ
     n,D,N=size(phi)
     numbatches=int(ceil(N/m))
     sigma_w=1;
-    
+
     # initialise w,U^(k)
     w_store=Array(Float64,Q,maxepoch*numbatches)
     U_store=Array(Float64,n,r,D,maxepoch*numbatches)
@@ -755,7 +781,6 @@ function GPT_SGLDERM_probit(phi::Array, y::Array, I::Array, r::Integer, Q::Integ
             idx=(m*(batch-1)+1):min(m*batch,N)
             phi_batch=phi[:,:,idx]; y_batch=y[idx];
             batch_size=length(idx) #this is m except for last batch
-
             # compute <phi^(k)(x_i),U^(k)_{.l}> for all k,l,batch and store in temp
             temp=phidotU(U,phi_batch)
 
@@ -804,7 +829,7 @@ function GPT_SGLDERM_probit(phi::Array, y::Array, I::Array, r::Integer, Q::Integ
 end
 
 #SGLD on Tucker Model with Stiefel Manifold, Probit likelihood, learn hyperparameters by SEM
-function GPT_SGLDERM_probit_SEM(X::Array, y::Array, I::Array, n::Real, r::Integer, Q::Integer, m::Integer, epsw::Real, epsU::Real, burnin::Integer, maxepoch::Integer, hyp_init::Array, seed::Integer)
+function GPT_SGLDERM_probit_SEM(X::Array, y::Array, I::Array, n::Real, r::Integer, Q::Integer, m::Integer, epsw::Real, epsU::Real, burnin::Integer, maxepoch::Integer, hyp_init::Array, Zmat::Array, bmat::Array)
     # phi is the D by n by N array of features where phi[k,:,i]=phi^(k)(x_i)
     # sigma is the s.d. of the observed values
     # epsw,epsU are the epsilons for w and U resp.
@@ -815,6 +840,7 @@ function GPT_SGLDERM_probit_SEM(X::Array, y::Array, I::Array, n::Real, r::Intege
     sigma_w=1;
     length_scale,sigma_RBF = hyp_init
     scale=sqrt(n/(Q^(1/D)))  
+
     # initialise w,U^(k)
     w_store=Array(Float64,Q,maxepoch*numbatches)
     U_store=Array(Float64,n,r,D,maxepoch*numbatches)
@@ -839,8 +865,8 @@ function GPT_SGLDERM_probit_SEM(X::Array, y::Array, I::Array, n::Real, r::Intege
 	    t = (epoch-1)*numbatches+batch
             # random samples for the stochastic gradient
             idx=(m*(batch-1)+1):min(m*batch,N)
-            phi_batch=feature(Xperm[idx,:],n,length_scale,sigma_RBF,seed,scale); 
-            phi_tilde_batch=feature_tilde(Xperm[idx,:],n,length_scale,sigma_RBF,seed,scale); y_batch=y[idx];
+            phi_batch=feature1(Xperm[idx,:],n,length_scale,sigma_RBF,scale,Zmat,bmat); 
+            phi_tilde_batch=feature_tilde1(Xperm[idx,:],n,length_scale,sigma_RBF,scale,Zmat,bmat);
             y_batch=y[idx];
             batch_size=length(idx) #this is m except for last batch
 
@@ -872,7 +898,7 @@ function GPT_SGLDERM_probit_SEM(X::Array, y::Array, I::Array, n::Real, r::Intege
             for k=1:D
                 gradU[:,:,k]=reshape((N/batch_size)*Psi[:,:,k]*tmp1 ,n,r)
             end
-	    
+
   	    ## SEM on length scale and sigma_RBF
             # SGLD step on w
             w[:]+=epsw*gradw/2 +sqrt(epsw)*randn(Q)
@@ -887,12 +913,12 @@ function GPT_SGLDERM_probit_SEM(X::Array, y::Array, I::Array, n::Real, r::Intege
 
 	    DV_l = computeDV(phi_batch,phi_tilde_batch,U,I) .* V
 	    gradl = ((w'*DV_l) * tmp1)[1]
-            DV_s = computeV(phidotU(U,feature(Xperm[idx,:],n,length_scale,sigma_RBF,seed,scale/sigma_RBF^(1/D))),I)
+            DV_s = V/sigma_RBF;#computeV(phidotU(U,feature(Xperm[idx,:],n,length_scale,sigma_RBF,seed,scale/sigma_RBF^(1/D))),I)
 	    gradSrbf = ((w'* DV_s) * tmp1)[1]
 
-            length_scale += 0.05*1/(1+t/10)*gradl
-            sigma_RBF += 0.01*1/(1+t/10)*gradSrbf 
-	    println("gradl = ", gradl, "; gradSrbf=", gradSrbf, "; update l=", 0.01*1/(1+t/5)*gradl/2, "; update s=", 0.1*1/(1+t/5)*gradSrbf)
+            length_scale += 0.005*1/(1+t/10)*gradl
+            sigma_RBF += 0.001*1/(1+t/8)*gradSrbf 
+	    println("gradl = ", gradl, "; gradSrbf=", gradSrbf, "; update l=", 0.005*1/(1+t/10)*gradl, "; update s=", 0.001*1/(1+t/10)*gradSrbf )
 
             #=
 	    theta = [log(length_scale),log(sigma_RBF)];
@@ -905,9 +931,6 @@ function GPT_SGLDERM_probit_SEM(X::Array, y::Array, I::Array, n::Real, r::Intege
            		 tmp = cdf(Normal(),fhat)
             		return(-sum(y_batch.*log(tmp) + (1-y_batch).*log(1-tmp)))
 	    end
-	    #d = DifferentiableFunction(lik_theta)
-	    #theta = fminbox(d,theta,[-2.5,-2.5],[1.5,1.5]).minimum
-
 		 g=ForwardDiff.gradient(lik_theta)
    		 function g!(theta::Vector,storage::Vector)
 			grad=g(theta)
@@ -920,7 +943,7 @@ function GPT_SGLDERM_probit_SEM(X::Array, y::Array, I::Array, n::Real, r::Intege
 		theta = optimize(lik_theta,g!,theta,method=:cg).minimum
 	    length_scale,sigma_RBF = exp(theta)
 	    println("theta = ", theta)
-=#
+	   =#
 	    if epoch>burnin
 	        w_store[:,((epoch-burnin)-1)*numbatches+batch]=w
 	        U_store[:,:,:,((epoch-burnin)-1)*numbatches+batch]=U

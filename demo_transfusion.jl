@@ -12,8 +12,8 @@ using PyPlot
 @everywhere Ntrain=500;
 @everywhere Ntest=N-Ntrain;
 @everywhere seed=17;
-@everywhere length_scale= 1.0 #exp(1.6732);
-@everywhere sigma_RBF= 1.0 #exp(sqrt(0.7650));
+@everywhere length_scale= exp(1.6732);
+@everywhere sigma_RBF= exp(sqrt(0.7650));
 @everywhere hyp_init = [length_scale,sigma_RBF];
 @everywhere Xtrain = data[1:Ntrain,1:D];
 @everywhere ytrain = data[1:Ntrain,D+1];
@@ -25,7 +25,7 @@ using PyPlot
 @everywhere Xtrain = datawhitening(Xtrain);
 @everywhere Xtest = (data[Ntrain+1:Ntrain+Ntest,1:D]-repmat(XtrainMean,Ntest,1))./repmat(XtrainStd,Ntest,1);
 @everywhere ytest = data[Ntrain+1:Ntrain+Ntest,D+1]
-@everywhere burnin=100;
+@everywhere burnin=0;
 @everywhere Q=100;   #200
 @everywhere n=80;
 @everywhere r = 20;
@@ -34,8 +34,8 @@ using PyPlot
 @everywhere phitrain=feature(Xtrain,n,length_scale,sigma_RBF,seed,scale);
 @everywhere phitest=feature(Xtest,n,length_scale,sigma_RBF,seed,scale);
 @everywhere I=samplenz(r,D,Q,seed); 
-@everywhere m = 150;
-@everywhere maxepoch = 50;
+@everywhere m = 500;
+@everywhere maxepoch = 10;
 
 
 @everywhere t=Iterators.product(3:7,5:9)
@@ -45,25 +45,11 @@ using PyPlot
 	myt[it]=prod;
         it+=1;
         end
-
-
-# error rate as a function of r, on training set
-#=
-@everywhere epsw,epsU = 0.0001, 0.0001
-ErrorRate=SharedArray(Float64,5);timer_r = SharedArray(Float64,5)
-rvec = round(linspace(5,20,5));
-@sync @parallel for i in 1:5
-    r = convert(Int,rvec[i])
-   	 tic(); 
-  	 I=samplenz(r,D,Q,seed);
-         w_store,U_store=GPT_SGLDERM_probit(phitrain,ytrain,I,r,Q,m, epsw, epsU, burnin, maxepoch);
-	w_store1,U_store1,l_store,SigmaRBF_store = GPTinf.GPT_SGLDERM_probit_SEM(Xtrain, ytrain, I, n, r, Q, m, epsw, epsU, burnin, maxepoch, [1.0,1.0], seed);
-	nlp,nlpmean = nlp_func(w_store,U_store,phitrain,ytrain)
-	nlp1,nlpmean1 = nlp_hyper_func(w_store1,U_store1,Xtrain,ytrain,l_store,SigmaRBF_store)
-  	 timer_r[i] = toq();
-println(r)
-end
-=#
+ 
+ srand(seed)
+    Zmat=randn(n,D)
+    bmat=rand(n,D)*2*pi
+ 
 
 
 @everywhere function nlp_func(w_store::Array,U_store::Array,phitest::Array,ytest::Array)
@@ -86,7 +72,57 @@ end
 	nlp=zeros(T);
 	tmp=zeros(size(ytest,1))
 	for epoch=1:T
-		phitest = feature(Xtest,n,length_scale,sigma_RBF,seed,scale);
+		phitest = GPTinf.feature1(Xtest,n,length_scale,sigma_RBF,scale,Zmat,bmat);
+		prob = cdf(Normal(),pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest))
+		nlp[epoch] = -sum(ytest.*log(prob) + (1-ytest).*log(1-prob))
+		tmp += prob
+	end
+	tmp = tmp/T
+	return(nlp,-sum(ytest.*log(tmp) + (1-ytest).*log(1-tmp)))
+end
+
+# error rate as a function of r, on training set
+#=
+@everywhere epsw,epsU = 0.0001, 0.0001
+ErrorRate=SharedArray(Float64,5);timer_r = SharedArray(Float64,5)
+rvec = round(linspace(5,20,5));
+@sync @parallel for i in 1:5
+    r = convert(Int,rvec[i])
+   	 tic(); 
+  	 I=samplenz(r,D,Q,seed);
+         w_store,U_store=GPTinf.GPT_SGLDERM_probit(phitrain,ytrain,I,r,Q,m, epsw, epsU, burnin, maxepoch);
+	w_store1,U_store1,l_store,SigmaRBF_store = GPTinf.GPT_SGLDERM_probit_SEM(Xtrain, ytrain, I, n, r, Q, m, epsw, epsU, burnin, maxepoch, hyp_init, Zmat,bmat);
+	nlp,nlpmean = nlp_func(w_store,U_store,phitrain,ytrain)
+	nlp1,nlpmean1 = nlp_hyper_func(w_store1,U_store1,Xtrain,ytrain,l_store,SigmaRBF_store)
+  	 timer_r[i] = toq();
+println(r)
+end
+=#
+
+ ###works for epsU = 1e+7
+
+
+@everywhere function nlp_func(w_store::Array,U_store::Array,phitest::Array,ytest::Array)
+	T = size(w_store,2)
+	nlp=zeros(T);
+	tmp=zeros(size(ytest,1))
+	for epoch=1:T
+		prob = cdf(Normal(),pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest))
+		nlp[epoch] = -sum(ytest.*log(prob) + (1-ytest).*log(1-prob))
+		tmp += prob
+	end
+	tmp = tmp/T
+	return(nlp,-sum(ytest.*log(tmp) + (1-ytest).*log(1-tmp)))
+end
+
+
+
+@everywhere function nlp_hyper_func(w_store::Array,U_store::Array,Xtest::Array,ytest::Array,l_store::Array,SigmaRBF_store::Array)
+	T = size(w_store,2)
+	nlp=zeros(T);
+	tmp=zeros(size(ytest,1))
+	for epoch=1:T
+		phitest = GPTinf.feature1(Xtest,n,length_scale,sigma_RBF,scale,Zmat,bmat);
 		prob = cdf(Normal(),pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest))
 		nlp[epoch] = -sum(ytest.*log(prob) + (1-ytest).*log(1-prob))
 		tmp += prob
