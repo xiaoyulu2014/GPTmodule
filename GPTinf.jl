@@ -2,7 +2,7 @@ module GPTinf
 
 using Distributions,Optim,ForwardDiff
 
-export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM, RMSESGLDvec, pred, data_simulator, GPTHMC, GPT_w, GPT_SGLDERM_hyper,GPT_SGLDERM, GPT_SGLDERM_probit,GPNT_hyperparameters,featureNotensor,GPT_SGLDERM_probit_SEM,hash_feature
+export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM, RMSESGLDvec, pred, data_simulator, GPTHMC, GPT_w, GPT_SGLDERM_hyper,GPT_SGLDERM,GPT_probit_SGD, GPT_SGLDERM_probit,GPNT_hyperparameters,featureNotensor,GPT_SGLDERM_probit_SEM,hash_feature
 
 function datawhitening(X::Array)
     for i = 1:size(X,2)
@@ -830,11 +830,7 @@ end
 
 #SGLD on Tucker Model with Stiefel Manifold, Probit likelihood, learn hyperparameters by SEM
 function GPT_SGLDERM_probit_SEM(X::Array, y::Array, I::Array, n::Real, r::Integer, Q::Integer, m::Integer, epsw::Real, epsU::Real, burnin::Integer, maxepoch::Integer, hyp_init::Array, Zmat::Array, bmat::Array)
-    # phi is the D by n by N array of features where phi[k,:,i]=phi^(k)(x_i)
-    # sigma is the s.d. of the observed values
-    # epsw,epsU are the epsilons for w and U resp.
-    # maxepoch is the number of sweeps through whole dataset
- 
+   
     N,D=size(X)
     numbatches=int(ceil(N/m))
     sigma_w=1;
@@ -911,14 +907,22 @@ function GPT_SGLDERM_probit_SEM(X::Array, y::Array, I::Array, n::Real, r::Intege
                 end
             end
 
+	    theta = log(sigma_RBF);
 	    DV_l = computeDV(phi_batch,phi_tilde_batch,U,I) .* V
-	    gradl = ((w'*DV_l) * tmp1)[1]
-            DV_s = V/sigma_RBF;#computeV(phidotU(U,feature(Xperm[idx,:],n,length_scale,sigma_RBF,seed,scale/sigma_RBF^(1/D))),I)
-	    gradSrbf = ((w'* DV_s) * tmp1)[1]
+	    gradl = (N/batch_size)*((w'*DV_l) * tmp1)[1]
+          #  DV_s = V/sigma_RBF;#computeV(phidotU(U,feature(Xperm[idx,:],n,length_scale,sigma_RBF,seed,scale/sigma_RBF^(1/D))),I)
+	  #  gradSrbf = (N/batch_size)*((w'* DV_s) * tmp1)[1]
 
-            length_scale += 0.005*1/(1+t/10)*gradl
-            sigma_RBF += 0.001*1/(1+t/8)*gradSrbf 
-	    println("gradl = ", gradl, "; gradSrbf=", gradSrbf, "; update l=", 0.005*1/(1+t/10)*gradl, "; update s=", 0.001*1/(1+t/10)*gradSrbf )
+
+
+ 	    gradtheta =(N/batch_size)*((w'* V) * tmp1)[1] 
+	    theta += 0.001*gradtheta
+	    sigma_RBF = exp(theta)
+
+
+            length_scale += 0.001*gradl
+          #  sigma_RBF += 0.001*1/(1+t/10)*gradSrbf 
+	  #  println("gradl = ", gradl, "; gradSrbf=", gradSrbf, "; update l=", 0.001*1/(1+t/10)*gradl, "; update s=", 0.001*1/(1+t/10)*gradSrbf )
 
             #=
 	    theta = [log(length_scale),log(sigma_RBF)];
@@ -955,6 +959,48 @@ function GPT_SGLDERM_probit_SEM(X::Array, y::Array, I::Array, n::Real, r::Intege
     return w_store,U_store,l_store,SigmaRBF_store
 end
 
+
+###
+#SGLD on Tucker Model with Stiefel Manifold, Probit likelihood
+function GPT_probit_SGD(phi::Array, y::Array, m::Integer, eps::Real, burnin::Integer, maxepoch::Integer)
+   
+    n,N=size(phi)
+    numbatches=int(ceil(N/m))
+    sigma=1;
+
+    # initialise w,U^(k)
+    theta_store=Array(Float64,n,maxepoch*numbatches)
+    theta=sigma*randn(n)
+
+    for epoch=1:(burnin+maxepoch)
+        #randomly permute training data and divide into mini_batches of size m
+        perm=randperm(N)
+        phi=phi[:,perm]; y=y[perm];
+        
+        # run SGLD on w and SGLDERM on U
+        for batch=1:numbatches
+            # random samples for the stochastic gradient
+            idx=(m*(batch-1)+1):min(m*batch,N)
+            phi_batch=phi[:,idx]; y_batch=y[idx];
+            batch_size=length(idx) 
+    
+            # compute fhat where fhat[i]=V[:,i]'w
+            fhat= phi_batch'*theta
+
+            # now can compute gradw, the stochastic gradient of log post wrt w
+            tmp = cdf(Normal(),fhat)
+            grad = (N/batch_size)*phi_batch*( pdf(Normal(),fhat) .* (y_batch./tmp - (1-y_batch)./(1-tmp)) ) - theta/(sigma^2)
+	    
+            # SGLD step on w
+            theta[:]+=eps*grad/2 
+
+	    if epoch>burnin
+	        theta_store[:,((epoch-burnin)-1)*numbatches+batch]=theta
+	    end
+        end
+    end
+    return theta_store
+end
 # function to return the negative log marginal likelihood of No Tensor model
 function GPNT_logmarginal(X::Array,y::Array,n::Integer,length_scale::Real,sigma_RBF::Real,sigma::Real,seed::Integer)
     N=size(X,1);
