@@ -43,130 +43,120 @@ end
 @everywhere Rating = readdlm("/homes/xlu/Downloads/ml-100k/u.data",Float64);
 #UserData[:,end] = map(string,UserData[:,end]);
 #convertdummy(convert(DataFrame,UserData),[:x5]);
-@everywhere UserData = convertdummy(convert(DataFrame,UserData),[:x3,:x4])[:,1:end-1]
-@everywhere MovieData = MovieData[:,[1,6:end]];
 
-
+#=
 @everywhere User = UserData[Rating[:,1],2:end];
 @everywhere User = convert(Array{Float64,2},User);
-@everywhere Movie = MovieData[Rating[:,1],2:end];
+@everywhere Movie = MovieData[Rating[:,2],2:end];
 @everywhere Movie = convert(Array{Float64,2},Movie);
 @everywhere data = hcat(User,Movie);
 @everywhere data[isnan(data)] = 0.0
 @everywhere N,D = size(data);
-@everywhere Ntrain = 500;
-@everywhere Ntest = 500;
-@everywhere Xtrain = data[1:Ntrain,:];
+=#
+@everywhere Ntrain = 50000;
+@everywhere Ntest = 50000;
+
+@everywhere UserData = convertdummy(convert(DataFrame,UserData),[:x3,:x4])[:,1:end-1];
+@everywhere MovieData = MovieData[:,[1,6:end]];
+@everywhere UserData = convert(Array{Float64,2},UserData)[:,2:end];
+@everywhere MovieData = convert(Array{Float64,2},MovieData)[:,2:end];
+@everywhere UserData=datawhitening(UserData);
+@everywhere MovieData=datawhitening(MovieData);
+
+@everywhere a,b=0.5,0.5;
+@everywhere phiUser = GPTinf.hash_feature(UserData,n,M,a,b);
+@everywhere phiMovie = GPTinf.hash_feature(MovieData,n+22-19,M,a,b);
+
+@everywhere phitrain=Array(Float64,n+22,2,Ntrain)
+@everywhere phitest=Array(Float64,n+22,2,Ntest)
+@everywhere   for i=1:Ntrain
+			phitrain[:,1,i]=phiUser[:,Rating[i,1]]
+			phitrain[:,2,i]=phiMovie[:,Rating[i,2]]
+		end
+
+@everywhere   for i=1:Ntest
+			phitest[:,1,i]=phiUser[:,Rating[Ntrain+i,1]]
+			phitest[:,2,i]=phiMovie[:,Rating[Ntrain+i,2]]
+		end
+
+
+
 @everywhere ytrain = Rating[1:Ntrain,3];
-@everywhere Xtest = data[Ntrain+1:Ntrain+Ntest,:];
 @everywhere ytest = Rating[Ntrain+1:Ntrain+Ntest,3];
-@everywhere XtrainMean=mean(Xtrain,1); 
-@everywhere XtrainStd=zeros(1,D);
-@everywhere for i=1:D
-	    XtrainStd[1,i]=std(Xtrain[:,i]);
-	    end
 @everywhere ytrainMean=mean(ytrain);
 @everywhere ytrainStd=std(ytrain);
-#data whitening
-@everywhere Xtrain = datawhitening(Xtrain);
 @everywhere ytrain=datawhitening(ytrain);
-@everywhere Xtest = (Xtest-repmat(XtrainMean,Ntest,1))./repmat(XtrainStd,Ntest,1);
 @everywhere ytest = (ytest-ytrainMean)/ytrainStd;
-@everywhere seed = 10;
+
 ## learning hyperparameters
 @everywhere n = 150; 
 #GPNT_hyperparameters(Xtrain,ytrain,n,0.5,0.5,0.5,seed)
-@everywhere length_scale=0.4909;
-@everywhere sigma_RBF=0.1773;
-@everywhere sigma=0.9859;
-
-@everywhere burnin=10;
-@everywhere numiter=50;
-@everywhere Q=100;   #200
-@everywhere scale=1;
+@everywhere burnin=0;
+@everywhere numiter=5;
+@everywhere Q=200;   #200
 @everywhere M = 50
-@everywhere phitrain=GPTinf.hash_feature(Xtrain,n,M,0.2,0.5,seed,21,19);
-@everywhere phitrain[isnan(phitrain)] = 0.0;
-@everywhere phitest=GPTinf.hash_feature(Xtest,n,M,0.2,0.5,seed,21,19);
-@everywhere phitest[isnan(phitest)] = 0.0;
 @everywhere r = 30
-
 
 #SGLD
 @everywhere using Distributions
 @everywhere D = 2;
-@everywhere length_scale = exp(randn(1))[1];  @everywhere sigma_RBF = exp(randn(1))[1]; @everywhere tau = rand(Gamma(1,1))[1];  @everywhere signal_var = 1/tau;
-@everywhere scale = sqrt(n/(Q^(1/D)));
-#@everywhere I = rand(DiscreteUniform(1, r),Q,D)
-@everywhere I=samplenz(r,D,Q,seed); 
+@everywhere signal_var = 0.1;
+@everywhere I=samplenz(r,D,Q,17); 
 @everywhere m = 500;
-@everywhere maxepoch = 10;
+@everywhere maxepoch = 100;
 
 @everywhere using Iterators
-@everywhere t=Iterators.product(2:6,3:8)
-@everywhere myt=Array(Any,30);
+@everywhere t=Iterators.product(2:4,[1,2,4])
+@everywhere myt=Array(Any,9);
 @everywhere it=1;
 @everywhere for prod in t
 	myt[it]=prod;
         it+=1;
         end
 
+#tuning epsw and epsU
+numbatches=int(ceil(Ntrain/m))
+testRMSE = SharedArray(Float64,maxepoch*numbatches,6); testNMAE= SharedArray(Float64,maxepoch*numbatches,6);trainNMAE= SharedArray(Float64,maxepoch*numbatches,6)
+#epsw=0.01;epsU=2*float(string("1e-",5))
+#=
 @sync @parallel for Tuple in myt
     i,j=Tuple;
-    epsw=float(string("1e-",i)); epsU=float(string("1e-",j));
+    epsw=float(string("1e-",i)); epsU=5*float(string("1e-",6));
     w_store,U_store=GPTinf.GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
-    testRMSE=Array(Float64,maxepoch)
+   # testRMSE=Array(Float64,maxepoch*numbatches)
     numbatches=int(ceil(Ntrain/m))
-    for epoch=1:maxepoch
+    for epoch=1:maxepoch*numbatches
+        trainpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitrain)
+	trainNMAE[epoch,j]=ytrainStd/(1.6*Ntrain) * sum(abs(ytrain-trainpred))
         testpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest)
-        testRMSE[epoch]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+        testRMSE[epoch,j]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+	testNMAE[epoch,j]=ytrainStd/(1.6*Ntest) * sum(abs(ytest-testpred))
     end
     
-println("r=",r,";minRMSE=",minimum(testRMSE),";minepoch=",indmin(testRMSE),";epsw=",epsw,";epsU=",epsU,";burnin=",burnin,";maxepoch=",maxepoch);
+println("r=",r,";minRMSE=",minimum(testNMAE[:,j]),";minepoch=",indmin(testNMAE[:,j]),";epsw=",epsw,";epsU=",epsU,";burnin=",burnin,";maxepoch=",maxepoch);
 end
-
-
-
-# fixed U
-rvec = convert(Array{Int,1},round(linspace(10,50,5)));
-@everywhere function func_w(r::Real)
-	I=samplenz(r,D,Q,seed);
-	w_store,U_store=GPT_w(phitrain,ytrain,sigma,I,r,Q);
-	RMSEtest = ytrainStd*RMSE(w_store,U_store,I,phitest,ytest);
-	return(RMSEtest)
-end
-RMSE_w = pmap(func_w,rvec)
-
-
-@everywhere function func(r::Real)
-	I=samplenz(r,D,Q,seed);
-	w_store,U_store=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter)
-	RMSEtest = ytrainStd*RMSE(w_store,U_store,I,phitest,ytest);
-	return(RMSEtest)
-end
-RMSE_wU = pmap(func,rvec)
-
-
-
-
-#GP exact using learnt hyperparameters using GPkit, memory issue
-include("/homes/xlu/Downloads/GPkit/src/GPKit.jl")
-using GPkit
-cov=CovSEiso(length_scale,sigma_RBF);    # use ; to suppress return being printed in repl
-lik=LikGauss(sn2);
-gp=GPmodel(InfExact(), cov, lik, MeanZero(), Xtrain, ytrain);
-# now we can run the model - you'll get deprecation warnings in julia 0.4,
-# use julia --depwarn=no when starting the repl to supporess them
-(post,nlZ,dnlZ)=inference(gp, with_dnlz=false); # posterior and derivatives if requested
-(ymu,ys2,fmu,fs2,lp)=prediction(gp, post, Xtrain);  # predictions and variances (see gpml)
-
-#= using GPexact
-f =  GPexact.SECov(length_scale,sigma_RBF);
-gp = GPexact.GP(0,f,size(Xtrain,2));
-
-tic();yfittrain = GPpost(gp,Xtrain,ytrain,Xtrain,sigma);timer_train = toc();
-RMSEtrain = ytrainStd* (norm(ytrain-yfittrain)/sqrt(Ntrain));
-tic();yfittest = GPpost(gp,Xtrain,ytrain,Xtest,sigma);timer_test = toc();
-RMSEtest = ytrainStd* (norm(ytest-yfittest)/sqrt(N - Ntrain));
 =#
+
+@everywhere burnin=50; @everywhere numiter=10; @everywhere rvec = round(linspace(5,50,5));@everywhere seed=17
+testNMAE=SharedArray(Float64,numiter,5);trainNMAE=SharedArray(Float64,numiter,5);testRMSE = SharedArray(Float64,numiter,5);timer=SharedArray(Float64,5);
+@parallel for i in 1:5
+    r = convert(Int,rvec[i])
+    tic();
+    I=samplenz(r,D,Q,seed);
+    wGibbs,UGibbs=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter);
+    for epoch=1:numiter
+        trainpred=pred(wGibbs[:,epoch],UGibbs[:,:,:,epoch],I,phitrain)
+	trainNMAE[epoch,j]=ytrainStd/(1.6*Ntrain) * sum(abs(ytrain-trainpred))
+        trainpred=pred(wGibbs[:,epoch],UGibbs[:,:,:,epoch],I,phitest)
+        testRMSE[epoch,j]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+	testNMAE[epoch,j]=ytrainStd/(1.6*Ntest) * sum(abs(ytest-testpred))
+    end
+    timer[i] = toq();
+println("r=",r,";minRMSE=",minimum(testNMAE[:,j]),";minepoch=",indmin(testNMAE[:,j]));
+end
+
+
+
+
+
 

@@ -2,7 +2,7 @@ module GPTinf
 
 using Distributions,Optim,ForwardDiff
 
-export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM, RMSESGLDvec, pred, data_simulator, GPTHMC, GPT_w, GPT_SGLDERM_hyper,GPT_SGLDERM,GPT_probit_SGD, GPT_SGLDERM_probit,GPNT_hyperparameters,featureNotensor,GPT_SGLDERM_probit_SEM,hash_feature
+export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM, RMSESGLDvec, pred, data_simulator, GPTHMC, GPT_w, GPT_SGLDERM_hyper,GPT_SGLDERM,GPT_probit_SGD, GPT_SGLDERM_probit,GPNT_hyperparameters,featureNotensor,GPT_SGLDERM_probit_SEM,hash_feature,GPT_probit_SGD_hyper,GPT_probit_SGD_adam
 
 function datawhitening(X::Array)
     for i = 1:size(X,2)
@@ -86,32 +86,35 @@ function feature_tilde1(X::Array,n::Integer,length_scale::Real,sigma_RBF::Real,s
     return scale*(sigma_RBF)^(1/D)*sqrt(2/n)*phi
 end
 
-
+#=
 function hash_feature(X::Array,n::Integer,M::Integer,a::Real,b::Real,seed::Integer,D1::Integer,D2::Integer)
     N = size(X,1)
-    phi = Array(Float64,n+D1,2,N)
+    phi = zeros(n+D1,2,N)
     #srand(seed)
     #sample the non-zeros positions
     for i=1:N
 	idx = randperm(n)[1:M]
-	phi[idx,1,i]= 2.*(rand(Bernoulli(),M) - 0.5)
-	for j in 1:n+D1
-		phi[j,1,i] = [a*phi[1:n,1,i], b*X[i,1:D1]'][j]
-         end
+	phi[idx,1,i]= 2.*(rand(Bernoulli(),M) - 0.5)/M
+	phi[:,1,i] = [a*phi[1:n,1,i], b*X[i,1:D1]']
 	idx2 = randperm(n+D1-D2)[1:M]
-	phi[idx2,2,i]= 2.*(rand(Bernoulli(),M) - 0.5)
-	for j in 1:n+D1
-		phi[j,2,i] = [a*phi[1:n+D1-D2,2,i], b*X[i,D1+1:end]'][j]
-	end
+	phi[idx2,2,i]= 2.*(rand(Bernoulli(),M) - 0.5)/M
+	phi[:,2,i] = [a*phi[1:n+D1-D2,2,i], b*X[i,(D1+1):end]']
+    end
+    return phi
+end=#
+
+function hash_feature(X::Array,n::Integer,M::Integer,a::Real,b::Real)
+    #n:number of hash features
+    N,D = size(X)
+    phi = zeros(n+D,N)
+    for i=1:N
+	idx = randperm(n)[1:M]
+	phi[idx,i]= 2.*(rand(Bernoulli(),M) - 0.5)/M
+	phi[:,i] = [a*phi[1:n,i], b*X[i,:]']
     end
     return phi
 end
 
-
-
-
-
-  
 
 # sample the Q random non-zero locations of w
 function samplenz(r::Integer,D::Integer,Q::Integer,seed::Integer)
@@ -748,7 +751,7 @@ function GPTHMC(phi::Array, y::Array, sigma::Real, I::Array, r::Integer, Q::Inte
 end
 
 #SGLD on Tucker Model with Stiefel Manifold, Probit likelihood
-function GPT_SGLDERM_probit(phi::Array, y::Array, I::Array, r::Integer, Q::Integer, m::Integer, epsw::Real, epsU::Real, burnin::Integer, maxepoch::Integer)
+function GPT_SGLDERM_probit(phi::Array, y::Array, I::Array, r::Integer, Q::Integer, m::Integer, epsw::Real, epsU::Real, burnin::Integer, maxepoch::Integer, steifel::Bool)
     # phi is the D by n by N array of features where phi[k,:,i]=phi^(k)(x_i)
     # sigma is the s.d. of the observed values
     # epsw,epsU are the epsilons for w and U resp.
@@ -756,19 +759,27 @@ function GPT_SGLDERM_probit(phi::Array, y::Array, I::Array, r::Integer, Q::Integ
     
     n,D,N=size(phi)
     numbatches=int(ceil(N/m))
-    sigma_w=1;
+    sigma_u = sqrt(1/r)
 
     # initialise w,U^(k)
     w_store=Array(Float64,Q,maxepoch*numbatches)
     U_store=Array(Float64,n,r,D,maxepoch*numbatches)
-    w=sigma_w*randn(Q)
+
 
     U=Array(Float64,n,r,D)
-    for k=1:D
-        Z=randn(r,n)
-        U[:,:,k]=transpose(\(sqrtm(Z*Z'),Z)) #sample uniformly from V_{n,r}
-    end
+    if steifel
+	    sigma_w=1;    
+	    for k=1:D
+		Z=randn(r,n)
+		U[:,:,k]=transpose(\(sqrtm(Z*Z'),Z)) #sample uniformly from V_{n,r}
+	    end
+    else    sigma_w = sqrt(r^D/Q) 
+	for k=1:D
+		U[:,:,k]=sigma_u*randn(n,r)
+	    end
+    end 
 
+    w=sigma_w*randn(Q)
 
     for epoch=1:(burnin+maxepoch)
         #randomly permute training data and divide into mini_batches of size m
@@ -802,23 +813,27 @@ function GPT_SGLDERM_probit(phi::Array, y::Array, I::Array, r::Integer, Q::Integ
             
             # compute Psi as in (12)
             Psi=computePsi(A,phi_batch)
-            
-            # can now compute gradU where gradU[:,:,k]=stochastic gradient of log post wrt U^(k)
-            gradU=Array(Float64,n,r,D)
-            for k=1:D
-                gradU[:,:,k]=reshape((N/batch_size)*Psi[:,:,k]*( pdf(Normal(),fhat) .* (y_batch./tmp - (1-y_batch)./(1-tmp)) ),n,r)
-            end
-	    
+
             # SGLD step on w
             w[:]+=epsw*gradw/2 +sqrt(epsw)*randn(Q)
 
-            for k=1:D
-                mom=proj(U[:,:,k],sqrt(epsU)*gradU[:,:,k]/2+randn(n,r))
-                U[:,:,k]=geod(U[:,:,k],mom,sqrt(epsU));
-                if U[:,:,k]==zeros(n,r) #if NaN appears while evaluating G
-                    return zeros(Q,maxepoch*numbatches),zeros(n,r,D,maxepoch*numbatches)
-                end
-            end
+            gradU=Array(Float64,n,r,D)
+            if steifel
+		 for k=1:D
+			gradU[:,:,k]=reshape((N/batch_size)*Psi[:,:,k]*( pdf(Normal(),fhat) .* (y_batch./tmp - (1-y_batch)./(1-tmp)) ),n,r)
+		        mom=proj(U[:,:,k],sqrt(epsU)*gradU[:,:,k]/2+randn(n,r))
+		        U[:,:,k]=geod(U[:,:,k],mom,sqrt(epsU));
+		        if U[:,:,k]==zeros(n,r) #if NaN appears while evaluating G
+		            return zeros(Q,maxepoch*numbatches),zeros(n,r,D,maxepoch*numbatches)
+		        end
+		    end
+	     else 
+ 		    for k=1:D
+			gradU[:,:,k]=reshape((N/batch_size)*Psi[:,:,k]*( pdf(Normal(),fhat) .* (y_batch./tmp - (1-y_batch)./(1-tmp)) ),n,r)- U[:,:,k]/(sigma_u^2)
+		        U[:,:,k] += epsU*gradU[:,:,k]/2+sqrt(epsU)*randn(n,r)
+		    end
+	    end
+
 	    if epoch>burnin
 	        w_store[:,((epoch-burnin)-1)*numbatches+batch]=w
 	        U_store[:,:,:,((epoch-burnin)-1)*numbatches+batch]=U
@@ -836,6 +851,7 @@ function GPT_SGLDERM_probit_SEM(X::Array, y::Array, I::Array, n::Real, r::Intege
     sigma_w=1;
     length_scale,sigma_RBF = hyp_init
     scale=sqrt(n/(Q^(1/D)))  
+
 
     # initialise w,U^(k)
     w_store=Array(Float64,Q,maxepoch*numbatches)
@@ -976,7 +992,6 @@ function GPT_probit_SGD(phi::Array, y::Array, m::Integer, eps::Real, burnin::Int
         #randomly permute training data and divide into mini_batches of size m
         perm=randperm(N)
         phi=phi[:,perm]; y=y[perm];
-        
         # run SGLD on w and SGLDERM on U
         for batch=1:numbatches
             # random samples for the stochastic gradient
@@ -992,8 +1007,8 @@ function GPT_probit_SGD(phi::Array, y::Array, m::Integer, eps::Real, burnin::Int
             grad = (N/batch_size)*phi_batch*( pdf(Normal(),fhat) .* (y_batch./tmp - (1-y_batch)./(1-tmp)) ) - theta/(sigma^2)
 	    
             # SGLD step on w
-            theta[:]+=eps*grad/2 
-
+            theta[:]+=eps*grad/2
+ 	   # eps = eps*0.5
 	    if epoch>burnin
 	        theta_store[:,((epoch-burnin)-1)*numbatches+batch]=theta
 	    end
@@ -1001,18 +1016,83 @@ function GPT_probit_SGD(phi::Array, y::Array, m::Integer, eps::Real, burnin::Int
     end
     return theta_store
 end
+
+
+
+#SGLD on Tucker Model with Stiefel Manifold, Probit likelihood, learn hyperparameters by SEM
+function GPT_probit_SGD_adam(X::Array, y::Array, I::Array, n::Real, m::Integer, alpha0::Real, burnin::Integer, maxepoch::Integer, hyp_init::Array, seed::Int)
+   
+    N,D=size(X)
+    numbatches=int(ceil(N/m))
+    sigma=1;
+    length_scale,sigma_RBF = hyp_init
+    beta1=0.9;beta2=0.999;eps=0.00000001
+    # initialise w,U^(k)
+    theta_store=Array(Float64,n,maxepoch*numbatches)
+    l_store=Array(Float64,maxepoch*numbatches)
+    SigmaRBF_store=Array(Float64,maxepoch*numbatches)
+    theta=sigma*randn(n)
+    mom = zeros(n+2); mom2 = zeros(n+2);
+    log_hyp = [log(length_scale),log(sigma_RBF)]
+    for epoch=1:(burnin+maxepoch)
+        #randomly permute training data and divide into mini_batches of size m
+        perm=randperm(N)
+        Xperm=X[perm,:]; y=y[perm];
+        
+        # run SGLD on w and SGLDERM on U
+        for batch=1:numbatches
+	    t = (epoch-1)*numbatches+batch
+            # random samples for the stochastic gradient
+            idx=(m*(batch-1)+1):min(m*batch,N)
+            phi_batch=featureNotensor(Xperm[idx,:],n,length_scale,sigma_RBF,seed);
+            phi_tilde_batch=featureNotensor_tilde(Xperm[idx,:],n,length_scale,sigma_RBF,seed);
+            y_batch=y[idx];
+            batch_size=length(idx) #this is m except for last batch
+
+             # compute fhat where fhat[i]=V[:,i]'w
+            fhat= phi_batch'*theta
+
+            # now can compute gradw, the stochastic gradient of log post wrt w
+            tmp = cdf(Normal(),fhat)
+	    tmp1 =  pdf(Normal(),fhat) .* (y_batch./tmp - (1-y_batch)./(1-tmp)) 
+            grad = (N/batch_size)*phi_batch* tmp1  - theta/(sigma^2)
+	    grad = [grad, (N/batch_size)*dot((phi_tilde_batch'*theta),tmp1)*exp(-length_scale)]  #grad wrt exp(l)
+	    grad = [grad, (N/batch_size)*dot((phi_batch'*theta),tmp1)/sigma_RBF*exp(-sigma_RBF)]
+
+	    mom = beta1*mom + (1-beta1)*grad
+	    mom2 = beta2*mom2 + (1-beta2)*grad.^2
+	    alpha = alpha0*sqrt(1-beta2^t)/(1-beta1^t)
+
+	    tmp2 = alpha*mom./(sqrt(mom2)+eps)
+            theta[:] += tmp2[1:n]
+	    log_hyp += tmp2[n+1:n+2]
+	   # length_scale += tmp2[n+1]; sigma_RBF += tmp2[n+2]
+	     length_scale,sigma_RBF = exp(log_hyp)
+	    # length_scale += eps*gradl; sigma_RBF += eps*grads
+	    println("update_l = ", tmp2[n+1])
+	    if epoch>burnin
+	        theta_store[:,((epoch-burnin)-1)*numbatches+batch]=theta
+		SigmaRBF_store[((epoch-burnin)-1)*numbatches+batch]=sigma_RBF
+		l_store[((epoch-burnin)-1)*numbatches+batch]=length_scale
+	    end
+        end
+    end
+    return theta_store,l_store,SigmaRBF_store
+end
+
+
 # function to return the negative log marginal likelihood of No Tensor model
-function GPNT_logmarginal(X::Array,y::Array,n::Integer,length_scale::Real,sigma_RBF::Real,sigma::Real,seed::Integer)
+#=function GPNT_logmarginal(X::Array,y::Array,n::Integer,length_scale::Real,sigma_RBF::Real,sigma::Real,seed::Integer)
     N=size(X,1);
     phi=featureNotensor(X,n,length_scale,sigma_RBF,seed);
     A=phi*phi'+sigma^2*I;
     b=phi*y;
     B=\(A,b);
     return (N-n)*log(sigma)+log(det(A))/2+(sum(y.*y)-sum(b.*B))/(2*sigma^2)
-end
+end=#
 
 #learning hyperparams sigma,sigma_RBF,length_scale for No Tensor Model by optimising marginal likelihood
-function GPNT_hyperparameters(X::Array,y::Array,n::Integer,init_length_scale::Real,init_sigma_RBF::Real,init_sigma::Real,seed::Integer)
+#=function GPNT_hyperparameters(X::Array,y::Array,n::Integer,init_length_scale::Real,init_sigma_RBF::Real,init_sigma::Real,seed::Integer)
     logmarginal(hyperparams::Vector)=GPNT_logmarginal(X,y,n,exp(hyperparams[1]),exp(hyperparams[2]),exp(hyperparams[3]),seed); 
     g=ForwardDiff.gradient(logmarginal)
     function g!(hyperparams::Vector,storage::Vector)
@@ -1022,8 +1102,59 @@ function GPNT_hyperparameters(X::Array,y::Array,n::Integer,init_length_scale::Re
         end
     end
     optimize(logmarginal,g!,log([init_length_scale,init_sigma_RBF,init_sigma]),method=:cg,show_trace = true, extended_trace = true)
+end=#
+
+function GPNT_hyperparameters(X::Array,y::Array,n::Integer,init_length_scale::Vector,init_sigma_RBF::Real,init_signal_var::Real,seed::Integer)
+	D=size(X,2);
+    logmarginal(hyperparams::Vector)=GPNT_logmarginal(X,y,n,exp(hyperparams[1:D]),exp(hyperparams[D+1]),exp(hyperparams[D+2]),seed); # log marginal likelihood as a fn of hyperparams=log([length_scale,sigma_RBF,signal_var]) only.
+    # exp needed to enable unconstrained optimisation, since length_scale,sigmaRBF,signal_var must be positive
+    g=ForwardDiff.gradient(logmarginal)
+    function g!(hyperparams::Vector,storage::Vector)
+        grad=g(hyperparams)
+        for i=1:length(hyperparams)
+            storage[i]=grad[i]
+        end
+    end
+    l=optimize(logmarginal,g!,log([init_length_scale,init_sigma_RBF,init_signal_var]),method=:cg,show_trace = true, extended_trace = true)
+	return exp(l.minimum)
 end
 
+function GPNT_logmarginal(X::Array,y::Array,n::Integer,length_scale::Vector,sigma_RBF::Real,signal_var::Real,seed::Integer)
+    N,D=size(X);
+	if length(length_scale)!=D
+			error("dimensions of X and length_scale do not match")
+	end
+    phi=featureNotensor(X,n,length_scale,sigma_RBF,seed);
+    A=phi*phi'+signal_var*eye(n);
+    b=phi*y;
+	B=\(A,b);
+	lambda=eigvals(A);
+	logdetA=sum(log(lambda));
+    return (N-n)*log(signal_var)/2+logdetA/2+(sum(y.*y)-sum(b.*B))/(2*signal_var)
+end
+
+#varying length_scale
+function featureNotensor(X::Array,n::Integer,length_scale::Vector,sigma_RBF::Real,seed::Integer)    
+    N,D=size(X)
+	if length(length_scale)!=D
+			error("dimensions of X and length_scale do not match")
+	end
+    phi=Array(Float64,n,N)
+    srand(seed)
+    Z=Array(Float64,n,D)
+    for k=1:D
+	Z[:,k]=randn(n)/length_scale[k]
+    end
+    b=2*pi*rand(n)
+    for i=1:N
+		for j=1:n
+        	phi[j,i]=cos(sum(X[i,:].*Z[j,:]) + b[j])
+		end
+    end
+    return sqrt(2/n)*sigma_RBF*phi
+end
+
+#=
 function featureNotensor(X::Array,n::Integer,length_scale::Real,sigma_RBF::Real,seed::Integer)    
     N,D=size(X)
     phi=Array(Float64,n,N)
@@ -1035,6 +1166,19 @@ function featureNotensor(X::Array,n::Integer,length_scale::Real,sigma_RBF::Real,
     end
     return sqrt(2/n)*sigma_RBF*phi
 end
+
+function featureNotensor_tilde(X::Array,n::Integer,length_scale::Real,sigma_RBF::Real,seed::Integer)    
+    N,D=size(X)
+    phi=Array(Float64,n,N)
+    srand(seed)
+    Z=randn(n,D)/length_scale
+    b=2*pi*rand(n)
+    for i=1:N
+        phi[:,i]=sin(sum(repmat(X[i,:],n,1).*Z,2) + b) .* sum(repmat(X[i,:],n,1).*Z,2)/length_scale^2
+    end
+    return sqrt(2/n)*sigma_RBF*phi
+end
+=#
 
 
 #SGLD on Tucker Model with Stiefel Manifold
