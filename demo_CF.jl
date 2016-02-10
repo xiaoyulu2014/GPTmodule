@@ -62,7 +62,7 @@ end
 @everywhere MovieData = convert(Array{Float64,2},MovieData)[:,2:end];
 @everywhere UserData=datawhitening(UserData);
 @everywhere MovieData=datawhitening(MovieData);
-
+@everywhere n = 150; @everywhere M = 50
 @everywhere a,b=0.5,0.5;
 @everywhere phiUser = GPTinf.hash_feature(UserData,n,M,a,b);
 @everywhere phiMovie = GPTinf.hash_feature(MovieData,n+22-19,M,a,b);
@@ -89,24 +89,24 @@ end
 @everywhere ytest = (ytest-ytrainMean)/ytrainStd;
 
 ## learning hyperparameters
-@everywhere n = 150; 
+
 #GPNT_hyperparameters(Xtrain,ytrain,n,0.5,0.5,0.5,seed)
 @everywhere burnin=0;
 @everywhere numiter=5;
 @everywhere Q=200;   #200
-@everywhere M = 50
 @everywhere r = 30
-
-#SGLD
-@everywhere using Distributions
 @everywhere D = 2;
 @everywhere signal_var = 0.1;
-@everywhere I=samplenz(r,D,Q,17); 
+@everywhere sigma = 0.1;
+#SGLD
+@everywhere using Distributions
+@everywhere seed=17;
+@everywhere I=samplenz(r,D,Q,seed); 
 @everywhere m = 500;
-@everywhere maxepoch = 100;
+@everywhere maxepoch = 8;
 
 @everywhere using Iterators
-@everywhere t=Iterators.product(2:4,[1,2,4])
+@everywhere t=Iterators.product(3:5,5:7)
 @everywhere myt=Array(Any,9);
 @everywhere it=1;
 @everywhere for prod in t
@@ -114,49 +114,88 @@ end
         it+=1;
         end
 
-#tuning epsw and epsU
-numbatches=int(ceil(Ntrain/m))
-testRMSE = SharedArray(Float64,maxepoch*numbatches,6); testNMAE= SharedArray(Float64,maxepoch*numbatches,6);trainNMAE= SharedArray(Float64,maxepoch*numbatches,6)
-#epsw=0.01;epsU=2*float(string("1e-",5))
 #=
-@sync @parallel for Tuple in myt
-    i,j=Tuple;
-    epsw=float(string("1e-",i)); epsU=5*float(string("1e-",6));
+#tuning epsw and epsU
+numbatches=int(ceil(Ntrain/m));myn=size(myt,1);
+testRMSE = SharedArray(Float64,maxepoch*numbatches,myn); testNMAE= SharedArray(Float64,maxepoch*numbatches,myn);trainNMAE= SharedArray(Float64,maxepoch*numbatches,myn);
+epsvec=SharedArray(Float64,myn,2);timer=SharedArray(Float64,myn);
+
+#epsw=0.01;epsU=2*float(string("1e-",5)),j=4 is the best
+@sync @parallel for k=1:size(myt,1)
+    i,j = myt[k]
+    tic()
+    epsw=float(string("1e-",i)); epsU=float(string("1e-",j));
     w_store,U_store=GPTinf.GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
    # testRMSE=Array(Float64,maxepoch*numbatches)
     numbatches=int(ceil(Ntrain/m))
     for epoch=1:maxepoch*numbatches
         trainpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitrain)
-	trainNMAE[epoch,j]=ytrainStd/(1.6*Ntrain) * sum(abs(ytrain-trainpred))
+	trainNMAE[epoch,k]=ytrainStd/(1.6*Ntrain) * sum(abs(ytrain-trainpred))
         testpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest)
-        testRMSE[epoch,j]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
-	testNMAE[epoch,j]=ytrainStd/(1.6*Ntest) * sum(abs(ytest-testpred))
+        testRMSE[epoch,k]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+	testNMAE[epoch,k]=ytrainStd/(1.6*Ntest) * sum(abs(ytest-testpred))
     end
-    
+    epsvec[k,:] = [epsw,epsU];
+    timer[k] = toq();
 println("r=",r,";minRMSE=",minimum(testNMAE[:,j]),";minepoch=",indmin(testNMAE[:,j]),";epsw=",epsw,";epsU=",epsU,";burnin=",burnin,";maxepoch=",maxepoch);
 end
 =#
 
-@everywhere burnin=50; @everywhere numiter=10; @everywhere rvec = round(linspace(5,50,5));@everywhere seed=17
+### as a function of r
+@everywhere rvec=[15,20,30,50,100];@everywhere epsw=0.001; @everywhere epsU=0.0000005;
+numbatches=int(ceil(Ntrain/m)); myn=size(rvec,1);
+testRMSE = SharedArray(Float64,maxepoch*numbatches,myn); testNMAE= SharedArray(Float64,maxepoch*numbatches,myn);trainNMAE= SharedArray(Float64,maxepoch*numbatches,myn)
+timer=SharedArray(Float64,myn)
+@sync @parallel for k=1:myn
+         r = convert(Int,rvec[k])
+   	 tic(); 
+  	 I=samplenz(r,D,Q,seed);
+         w_store,U_store=GPTinf.GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
+	numbatches=int(ceil(Ntrain/m))
+	for epoch=1:maxepoch*numbatches
+		trainpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitrain)
+		trainNMAE[epoch,k]=ytrainStd/(1.6*Ntrain) * sum(abs(ytrain-trainpred))
+		testpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest)
+		testRMSE[epoch,k]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+		testNMAE[epoch,k]=ytrainStd/(1.6*Ntest) * sum(abs(ytest-testpred))
+	end
+    timer[k] = toq();
+println("r=",r,";minRMSE=",minimum(testNMAE[:,j]),";minepoch=",indmin(testNMAE[:,j]),";epsw=",epsw,";epsU=",epsU,";burnin=",burnin,";maxepoch=",maxepoch);
+end
+
+
+
+#=
+@everywhere burnin=0; @everywhere numiter=50; @everywhere rvec = round(linspace(30,80,5));@everywhere seed=17
 testNMAE=SharedArray(Float64,numiter,5);trainNMAE=SharedArray(Float64,numiter,5);testRMSE = SharedArray(Float64,numiter,5);timer=SharedArray(Float64,5);
-@parallel for i in 1:5
+@sync @parallel for i in 1:5
     r = convert(Int,rvec[i])
     tic();
     I=samplenz(r,D,Q,seed);
     wGibbs,UGibbs=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter);
     for epoch=1:numiter
         trainpred=pred(wGibbs[:,epoch],UGibbs[:,:,:,epoch],I,phitrain)
-	trainNMAE[epoch,j]=ytrainStd/(1.6*Ntrain) * sum(abs(ytrain-trainpred))
-        trainpred=pred(wGibbs[:,epoch],UGibbs[:,:,:,epoch],I,phitest)
-        testRMSE[epoch,j]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
-	testNMAE[epoch,j]=ytrainStd/(1.6*Ntest) * sum(abs(ytest-testpred))
+	trainNMAE[epoch,i]=ytrainStd/(1.6*Ntrain) * sum(abs(ytrain-trainpred))
+        testpred=pred(wGibbs[:,epoch],UGibbs[:,:,:,epoch],I,phitest)
+        testRMSE[epoch,i]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+	testNMAE[epoch,i]=ytrainStd/(1.6*Ntest) * sum(abs(ytest-testpred))
     end
     timer[i] = toq();
-println("r=",r,";minRMSE=",minimum(testNMAE[:,j]),";minepoch=",indmin(testNMAE[:,j]));
+println("r=",r,";minRMSE=",minimum(testNMAE[:,i]),";minepoch=",indmin(testNMAE[:,i]));
 end
+=#
+
+#=
+outfile=open("CF","a") #append to file
+    println(outfile,"testNMAE=",testNMAE,"; trainNMAE=",trainNMAE,
+		    "; testRMSE=", testRMSE, "; testRMSE=", testRMSE, 
+			"; timer=", timer)
+    close(outfile)
 
 
-
-
-
+outfile=open("CF_SGLD","a") #append to file
+    println(outfile,"testNMAE=",testNMAE,"; trainNMAE=",trainNMAE,
+		    "; testRMSE=", testRMSE, "; epsvec=", epsvec, "; timer=", timer)
+    close(outfile)
+=#
 

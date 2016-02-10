@@ -14,13 +14,14 @@ end
 function data_simulator(X::Array,n::Integer,r::Integer,Q::Integer,sigma::Real,length_scale::Real,sigma_RBF::Real,seed::Integer)
   N,D = size(X)
   w = randn(Q)
+  scale=sqrt(n/(Q^(1/D)))  
   U=Array(Float64,n,r,D)
   for k=1:D
     Z=randn(r,n)
     U[:,:,k]=transpose(\(sqrtm(Z*Z'),Z)) 
   end
   I=samplenz(r,D,Q,seed)
-  phi = feature(X,r,length_scale,sigma_RBF,seed,1)
+  phi = feature(X,r,length_scale,sigma_RBF,seed,scale)
   temp=phidotU(U,phi)
   V=computeV(temp,I)
   return computefhat(V,w) + sigma*randn(N)
