@@ -4,7 +4,7 @@
 ### data processing
 @everywhere function getdummy{R}(df::DataFrame, cname::Symbol, ::Type{R})
     darr = df[cname]
-    vals = sort(levels(darr))[2:end]
+    vals = sort(levels(darr))#[2:end]
     namedict = Dict(vals, 1:length(vals))   
     arr = zeros(R, length(darr), length(namedict))
     for i=1:length(darr)
@@ -37,6 +37,12 @@ end
 
 @everywhere convertdummy(df::DataFrame, cnames::Array{Symbol}) = convertdummy(df, cnames, Int32)
 
+@everywhere function bin_age(age::Array)
+	q=quantile(age,[0.2,0.4,0.6,0.8,1.0])
+	indmin(q.<UserData[30,2])
+        map(x->indmin(q.<x),age)
+end
+
 ##data clearing
 @everywhere UserData = readdlm("/homes/xlu/Downloads/ml-100k/u.user", '|');
 @everywhere MovieData = readdlm("/homes/xlu/Downloads/ml-100k/u.item",'|');
@@ -53,22 +59,30 @@ end
 @everywhere data[isnan(data)] = 0.0
 @everywhere N,D = size(data);
 =#
-@everywhere Ntrain = 50000;
-@everywhere Ntest = 50000;
-
-@everywhere UserData = convertdummy(convert(DataFrame,UserData),[:x3,:x4])[:,1:end-1];
+@everywhere Ntrain = 8000;
+@everywhere Ntest = 20000;
+@everywhere UserData[:,2] = bin_age(UserData[:,2])
+@everywhere UserData = convertdummy(convert(DataFrame,UserData),[:x2,:x3,:x4])[:,1:end-1];
 @everywhere MovieData = MovieData[:,[1,6:end]];
 @everywhere UserData = convert(Array{Float64,2},UserData)[:,2:end];
-@everywhere MovieData = convert(Array{Float64,2},MovieData)[:,2:end];
-@everywhere UserData=datawhitening(UserData);
-@everywhere MovieData=datawhitening(MovieData);
+@everywhere MovieData = convert(Array{Float64,2},MovieData)[:,3:end];  #first column is "unknown" genre, discard
+#@everywhere UserData=datawhitening(UserData);
+#@everywhere MovieData=datawhitening(MovieData);
+
+@everywhere ytrain = Rating[1:Ntrain,3];
+@everywhere ytest = Rating[Ntrain+1:Ntrain+Ntest,3];
+@everywhere ytrainMean=mean(ytrain);
+@everywhere ytrainStd=std(ytrain);
+@everywhere ytrain=datawhitening(ytrain);
+@everywhere ytest = (ytest-ytrainMean)/ytrainStd;
+
 @everywhere n = 150; @everywhere M = 50
 @everywhere a,b=0.5,0.5;
-@everywhere phiUser = GPTinf.hash_feature(UserData,n,M,a,b);
-@everywhere phiMovie = GPTinf.hash_feature(MovieData,n+22-19,M,a,b);
 
-@everywhere phitrain=Array(Float64,n+22,2,Ntrain)
-@everywhere phitest=Array(Float64,n+22,2,Ntest)
+@everywhere phiUser = GPTinf.hash_feature(UserData,n,M,a,b);
+@everywhere phiMovie = GPTinf.hash_feature(MovieData,n+size(UserData,2)-size(MovieData,2),M,a,b);
+@everywhere phitrain=Array(Float64,size(phiUser,1),2,Ntrain)
+@everywhere phitest=Array(Float64,size(phiUser,1),2,Ntest)
 @everywhere   for i=1:Ntrain
 			phitrain[:,1,i]=phiUser[:,Rating[i,1]]
 			phitrain[:,2,i]=phiMovie[:,Rating[i,2]]
@@ -81,38 +95,93 @@ end
 
 
 
-@everywhere ytrain = Rating[1:Ntrain,3];
-@everywhere ytest = Rating[Ntrain+1:Ntrain+Ntest,3];
-@everywhere ytrainMean=mean(ytrain);
-@everywhere ytrainStd=std(ytrain);
-@everywhere ytrain=datawhitening(ytrain);
-@everywhere ytest = (ytest-ytrainMean)/ytrainStd;
+#=
+@everywhere phiUser = [a*eye(size(UserData,1)), b*UserData']
+@everywhere phiMovie = [a*eye(size(MovieData,1)),b*MovieData']
+@everywhere sizeU,sizeM = size(phiUser,1),size(phiMovie,1)
 
-## learning hyperparameters
+@everywhere maxsize=max(sizeU,sizeM)
+@everywhere phitrain=zeros(maxsize,2,Ntrain);
+@everywhere phitest=zeros(maxsize,2,Ntest);
+@everywhere   for i=1:Ntrain
+			phitrain[1:sizeU,1,i]=phiUser[:,Rating[i,1]]
+			phitrain[1:sizeM,2,i]=phiMovie[:,Rating[i,2]]
+		end
 
+@everywhere   for i=1:Ntest
+			phitest[1:sizeU,1,i]=phiUser[:,Rating[Ntrain+i,1]]
+			phitest[1:sizeM,2,i]=phiMovie[:,Rating[Ntrain+i,2]]
+		end
+=#
 #GPNT_hyperparameters(Xtrain,ytrain,n,0.5,0.5,0.5,seed)
 @everywhere burnin=0;
-@everywhere numiter=5;
-@everywhere Q=200;   #200
+@everywhere numiter=20;
+@everywhere Q=200;   
 @everywhere r = 30
 @everywhere D = 2;
-@everywhere signal_var = 0.1;
-@everywhere sigma = 0.1;
-#SGLD
+@everywhere sigma = 0.3;
+@everywhere signal_var = sigma^2;
 @everywhere using Distributions
 @everywhere seed=17;
 @everywhere I=samplenz(r,D,Q,seed); 
 @everywhere m = 500;
-@everywhere maxepoch = 8;
+@everywhere maxepoch = 10;
 
 @everywhere using Iterators
-@everywhere t=Iterators.product(3:5,5:7)
+@everywhere t=Iterators.product(2:4,4:6)
 @everywhere myt=Array(Any,9);
 @everywhere it=1;
 @everywhere for prod in t
 	myt[it]=prod;
         it+=1;
         end
+
+## hyperparameters signal_var, M, a, b
+
+
+### as a function of training data points
+
+@everywhere epsw=0.0001; @everywhere epsU=0.000001;@everywhere r=30;@everywhere I=samplenz(r,D,Q,seed);@everywhere @everywhere Nvec=[0.2,0.4,0.6,0.8,1.0]*80000
+numbatches=int(ceil(maximum(Nvec)/m)); myn=size(Nvec,1);
+testRMSE = SharedArray(Float64,maxepoch*numbatches,myn); trainRMSE= SharedArray(Float64,maxepoch*numbatches,myn);timer=SharedArray(Float64,myn);
+@sync @parallel for k=1:myn
+         Ntrain = convert(Int,Nvec[k])
+         ytrain = Rating[1:Ntrain,3];
+         ytest = Rating[end-Ntest+1:end,3];
+         ytrainMean=mean(ytrain);
+         ytrainStd=std(ytrain);
+         ytrain=datawhitening(ytrain);
+         ytest = (ytest-ytrainMean)/ytrainStd;
+
+         phitrain=Array(Float64,size(phiUser,1),2,Ntrain)
+         phitest=Array(Float64,size(phiUser,1),2,Ntest)
+         for i=1:Ntrain
+		phitrain[:,1,i]=phiUser[:,Rating[i,1]]
+		phitrain[:,2,i]=phiMovie[:,Rating[i,2]]
+	 end
+         for i=1:Ntest
+		phitest[:,1,i]=phiUser[:,Rating[end-Ntest+i,1]]
+		phitest[:,2,i]=phiMovie[:,Rating[end-Ntest+i,2]]
+	 end
+        tic(); 
+        w_store,U_store=GPTinf.GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
+	numbatches=int(ceil(Ntrain/m))
+	for epoch=1:maxepoch*numbatches
+		trainpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitrain)
+		trainRMSE[epoch,k]=ytrainStd*norm(ytrain-trainpred)/sqrt(Ntrain)
+		testpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest)
+		testRMSE[epoch,k]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+	end
+        timer[k] = toq();  
+println("Ntrain=",Ntrain,";minRMSE=",minimum(testRMSE[:,k]),";minepoch=",indmin(testRMSE[:,k]),";epsw=",epsw,";epsU=",epsU,";burnin=",burnin,";maxepoch=",maxepoch);
+end
+#=outfile=open("CF_Ntrain","a") #append to file
+    println(outfile,"Ntrain=",Ntrain,"; testRMSE=",testRMSE,"; trainRMSE=",trainRMSE,
+		    "; testRMSE=", testRMSE, "; timer=", timer)
+    close(outfile)
+=#
+
+
 
 #=
 #tuning epsw and epsU
@@ -128,7 +197,7 @@ epsvec=SharedArray(Float64,myn,2);timer=SharedArray(Float64,myn);
     w_store,U_store=GPTinf.GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
    # testRMSE=Array(Float64,maxepoch*numbatches)
     numbatches=int(ceil(Ntrain/m))
-    for epoch=1:maxepoch*numbatches
+    @sync @parallel for epoch=1:maxepoch*numbatches
         trainpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitrain)
 	trainNMAE[epoch,k]=ytrainStd/(1.6*Ntrain) * sum(abs(ytrain-trainpred))
         testpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest)
@@ -137,12 +206,136 @@ epsvec=SharedArray(Float64,myn,2);timer=SharedArray(Float64,myn);
     end
     epsvec[k,:] = [epsw,epsU];
     timer[k] = toq();
-println("r=",r,";minRMSE=",minimum(testNMAE[:,j]),";minepoch=",indmin(testNMAE[:,j]),";epsw=",epsw,";epsU=",epsU,";burnin=",burnin,";maxepoch=",maxepoch);
+println("r=",r,";minRMSE=",minimum(testRMSE[:,k]),";minepoch=",indmin(testRMSE[:,k]),";epsw=",epsw,";epsU=",epsU,";burnin=",burnin,";maxepoch=",maxepoch);
 end
 =#
 
+
+##tuning ab=====
+#=
+@everywhere ab=Iterators.product([0.1,0.3,0.5,0.7],[0.1,0.3,0.7,0.5])
+@everywhere myab=Array(Any,16);
+@everywhere it=1;
+@everywhere for prod in ab
+	myab[it]=prod;
+        it+=1;
+        end
+@everywhere epsw=0.001; @everywhere epsU=0.00001
+@everywhere myn=size(myab,1);
+testRMSE = SharedArray(Float64,maxepoch*numbatches,myn); testNMAE= SharedArray(Float64,maxepoch*numbatches,myn);trainNMAE= SharedArray(Float64,maxepoch*numbatches,myn);timer=SharedArray(Float64,myn);
+@sync @parallel for k=1:size(myab,1)
+    a,b = myab[k]
+    tic()
+ phiUser = hash_feature(UserData,n,M,a,b);
+ phiMovie = hash_feature(MovieData,n+size(UserData,2)-size(MovieData,2),M,a,b);
+
+ phitrain=Array(Float64,size(phiUser,1),2,Ntrain)
+ phitest=Array(Float64,size(phiUser,1),2,Ntest)
+  for i=1:Ntrain
+			phitrain[:,1,i]=phiUser[:,Rating[i,1]]
+			phitrain[:,2,i]=phiMovie[:,Rating[i,2]]
+		end
+
+   for i=1:Ntest
+			phitest[:,1,i]=phiUser[:,Rating[Ntrain+i,1]]
+			phitest[:,2,i]=phiMovie[:,Rating[Ntrain+i,2]]
+	end
+    w_store,U_store=GPTinf.GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
+   # testRMSE=Array(Float64,maxepoch*numbatches)
+    numbatches=int(ceil(Ntrain/m))
+    @sync @parallel for epoch=1:maxepoch*numbatches
+        trainpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitrain)
+	trainNMAE[epoch,k]=ytrainStd/(1.6*Ntrain) * sum(abs(ytrain-trainpred))
+        testpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest)
+        testRMSE[epoch,k]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+	testNMAE[epoch,k]=ytrainStd/(1.6*Ntest) * sum(abs(ytest-testpred))
+    end
+    timer[k] = toq();
+println("r=",r,";minRMSE=",minimum(testRMSE[:,k]),";minepoch=",indmin(testRMSE[:,k]),";a=",a,";b=",b,";burnin=",burnin,";maxepoch=",maxepoch);
+end
+
+###  find hyper parameters signal var
+phifull=Array(Float64,size(phitrain,1)^2,size(phitrain,3))
+for i=1:size(phitrain,3)
+	phifull[:,i]=kron(phitrain[:,1,i],phitrain[:,2,i])
+end
+GPNT_hyperparameters_CF(phifull,ytrain,n,0.1,seed)
+=#
+
+
+##try 
+#=
+trainNMAEvec=SharedArray(Float64,maxepoch*numbatches);testRMSEvec=SharedArray(Float64,maxepoch*numbatches);testNMAEvec=SharedArray(Float64,maxepoch*numbatches);
+@sync @parallel for epoch=1:maxepoch*numbatches
+               trainpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitrain)
+           trainNMAEvec[epoch]=ytrainStd/(1.6*Ntrain) * sum(abs(ytrain-trainpred))
+               testpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest)
+               testRMSEvec[epoch]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+           testNMAEvec[epoch]=ytrainStd/(1.6*Ntest) * sum(abs(ytest-testpred))
+           end
+
+@everywhere function RMSEfunc(w_store::Array,U_store::Array,phitest::Array,ytest::Array)
+	T = size(w_store,2);Ntest=size(ytest,1)
+	tmp=zeros(Ntest)
+	for epoch=1:T
+		tmp += pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest)
+	end
+	tmp = tmp/T
+	return(ytrainStd*norm(ytest-tmp)/sqrt(Ntest))
+end
+RMSEfunc(w_store[:,end-50:end],U_store[:,:,:,end-50:end],phitest,ytest)
+=#
+
+### as a function of n
+#=
+@everywhere nvec=[50,100,200,300];@everywhere epsw=0.001; @everywhere epsU=0.00001;@everywhere r=30;@everywhere I=samplenz(r,D,Q,seed);
+numbatches=int(ceil(Ntrain/m)); myn=size(nvec,1);
+testRMSE = SharedArray(Float64,maxepoch*numbatches,myn); trainRMSE= SharedArray(Float64,maxepoch*numbatches,myn);timer=SharedArray(Float64,myn);
+testRMSEgibbs = SharedArray(Float64,numiter,myn); trainRMSEgibbs = SharedArray(Float64,numiter,myn);timergibbs =SharedArray(Float64,myn)
+@sync @parallel for k=1:myn
+         n = convert(Int,nvec[k])
+
+         phiUser = GPTinf.hash_feature(UserData,n,M,a,b);
+         phiMovie = GPTinf.hash_feature(MovieData,n+size(UserData,2)-size(MovieData,2),M,a,b);
+         phitrain=Array(Float64,size(phiUser,1),2,Ntrain)
+         phitest=Array(Float64,size(phiUser,1),2,Ntest)
+         for i=1:Ntrain
+		phitrain[:,1,i]=phiUser[:,Rating[i,1]]
+		phitrain[:,2,i]=phiMovie[:,Rating[i,2]]
+	 end
+         for i=1:Ntest
+		phitest[:,1,i]=phiUser[:,Rating[Ntrain+i,1]]
+		phitest[:,2,i]=phiMovie[:,Rating[Ntrain+i,2]]
+	 end
+        tic(); 
+        w_store,U_store=GPTinf.GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
+	numbatches=int(ceil(Ntrain/m))
+	for epoch=1:maxepoch*numbatches
+		trainpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitrain)
+		trainRMSE[epoch,k]=ytrainStd*norm(ytrain-trainpred)/sqrt(Ntrain)
+		testpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitest)
+		testRMSE[epoch,k]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+	end
+        timer[k] = toq();
+        tic();
+        wGibbs,UGibbs=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter);
+         for epoch=1:numiter
+            trainpred=pred(wGibbs[:,epoch],UGibbs[:,:,:,epoch],I,phitrain)
+	    trainRMSEgibbs[epoch,k]=ytrainStd*norm(ytrain-trainpred)/sqrt(Ntrain)
+            testpred=pred(wGibbs[:,epoch],UGibbs[:,:,:,epoch],I,phitest)
+            testRMSEgibbs[epoch,k]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+        end
+        timergibbs[k]=toq();
+println("n=",n,";minRMSE=",minimum(testRMSE[:,k]),";minepoch=",indmin(testRMSE[:,k]),";minRMSEgibbs=",minimum(testRMSEgibbs[:,k]),";epsw=",epsw,";epsU=",epsU,";burnin=",burnin,";maxepoch=",maxepoch);
+end
+=#
+outfile=open("CF_n","a") #append to file
+    println(outfile,"testRMSEgibbs=",testRMSEgibbs,"; timergibbs=",timergibbs,"; trainRMSEgibbs=",trainRMSEgibbs,"; testRMSE=",testRMSE,"; trainRMSE=",trainRMSE,"; timer=", timer)
+    close(outfile)
+
 ### as a function of r
-@everywhere rvec=[15,20,30,50,100];@everywhere epsw=0.001; @everywhere epsU=0.0000005;
+#=
+@everywhere rvec=[15,20,30,50,100];@everywhere epsw=0.001; @everywhere epsU=0.00001;
 numbatches=int(ceil(Ntrain/m)); myn=size(rvec,1);
 testRMSE = SharedArray(Float64,maxepoch*numbatches,myn); testNMAE= SharedArray(Float64,maxepoch*numbatches,myn);trainNMAE= SharedArray(Float64,maxepoch*numbatches,myn)
 timer=SharedArray(Float64,myn)
@@ -160,29 +353,15 @@ timer=SharedArray(Float64,myn)
 		testNMAE[epoch,k]=ytrainStd/(1.6*Ntest) * sum(abs(ytest-testpred))
 	end
     timer[k] = toq();
-println("r=",r,";minRMSE=",minimum(testNMAE[:,j]),";minepoch=",indmin(testNMAE[:,j]),";epsw=",epsw,";epsU=",epsU,";burnin=",burnin,";maxepoch=",maxepoch);
+println("r=",r,";minRMSE=",minimum(testRMSE[:,k]),";minepoch=",indmin(testRMSE[:,k]),";epsw=",epsw,";epsU=",epsU,";burnin=",burnin,";maxepoch=",maxepoch);
 end
 
 
 
-#=
-@everywhere burnin=0; @everywhere numiter=50; @everywhere rvec = round(linspace(30,80,5));@everywhere seed=17
-testNMAE=SharedArray(Float64,numiter,5);trainNMAE=SharedArray(Float64,numiter,5);testRMSE = SharedArray(Float64,numiter,5);timer=SharedArray(Float64,5);
-@sync @parallel for i in 1:5
-    r = convert(Int,rvec[i])
-    tic();
-    I=samplenz(r,D,Q,seed);
-    wGibbs,UGibbs=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter);
-    for epoch=1:numiter
-        trainpred=pred(wGibbs[:,epoch],UGibbs[:,:,:,epoch],I,phitrain)
-	trainNMAE[epoch,i]=ytrainStd/(1.6*Ntrain) * sum(abs(ytrain-trainpred))
-        testpred=pred(wGibbs[:,epoch],UGibbs[:,:,:,epoch],I,phitest)
-        testRMSE[epoch,i]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
-	testNMAE[epoch,i]=ytrainStd/(1.6*Ntest) * sum(abs(ytest-testpred))
-    end
-    timer[i] = toq();
-println("r=",r,";minRMSE=",minimum(testNMAE[:,i]),";minepoch=",indmin(testNMAE[:,i]));
-end
+outfile=open("CF_SGLDr","a") #append to file
+    println(outfile,"testNMAE=",testNMAE,"; trainNMAE=",trainNMAE,
+		    "; testRMSE=", testRMSE, "; epsvec=", epsvec, "; timer=", timer)
+    close(outfile)
 =#
 
 #=
@@ -198,4 +377,3 @@ outfile=open("CF_SGLD","a") #append to file
 		    "; testRMSE=", testRMSE, "; epsvec=", epsvec, "; timer=", timer)
     close(outfile)
 =#
-

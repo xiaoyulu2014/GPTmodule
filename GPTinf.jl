@@ -2,7 +2,7 @@ module GPTinf
 
 using Distributions,Optim,ForwardDiff
 
-export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM, RMSESGLDvec, pred, data_simulator, GPTHMC, GPT_w, GPT_SGLDERM_hyper,GPT_SGLDERM,GPT_probit_SGD, GPT_SGLDERM_probit,GPNT_hyperparameters,featureNotensor,GPT_SGLDERM_probit_SEM,hash_feature,GPT_probit_SGD_hyper,GPT_probit_SGD_adam
+export datawhitening,feature,samplenz,RMSE, GPTgibbs, GPTSGLD, RMSESGLD, GPNHT_SGLDERM, RMSESGLDvec, pred, data_simulator, GPTHMC, GPT_w, GPT_SGLDERM_hyper,GPT_SGLDERM,GPT_probit_SGD, GPT_SGLDERM_probit,GPNT_hyperparameters,featureNotensor,GPT_SGLDERM_probit_SEM,hash_feature,GPT_probit_SGD_hyper,GPT_probit_SGD_adam,GPNT_hyperparameters_CF
 
 function datawhitening(X::Array)
     for i = 1:size(X,2)
@@ -278,7 +278,6 @@ function computeA(U_phi::Array,w::Array,I::Array,r::Integer)
     return A
 end
 
-
 function computePsi(A,phi)
     r,D,data_size=size(A)
     n,D,data_size=size(phi)
@@ -290,6 +289,7 @@ function computePsi(A,phi)
     end
     return Psi
 end
+
 #work out minimum RMSE by averaging over predictions, starting from last prediction
 function RMSE(w_store::Array,U_store::Array,I::Array,phitest::Array,ytest::Array)
     Ntest=length(ytest);
@@ -307,6 +307,33 @@ function RMSE(w_store::Array,U_store::Array,I::Array,phitest::Array,ytest::Array
         out[i] = norm(ytest-tmp)/sqrt(Ntest)
     end=#
 end
+
+
+# function to return the negative log marginal likelihood of No Tensor model with Gaussian likelihood and fixed length_scale for CF
+function GPNT_logmarginal_CF(phi::Array,y::Array,signal_var::Real,seed::Integer)
+    A=phi*phi'+signal_var*eye(size(phi,1));
+    b=phi*y;
+	B=\(A,b);
+	lambda=eigvals(A);
+	logdetA=sum(log(lambda));
+    return (N-n)*log(signal_var)/2+logdetA/2+(sum(y.*y)-sum(b.*B))/(2*signal_var)
+end
+
+function GPNT_hyperparameters_CF(phi::Array,y::Array,init_signal_var::Real,seed::Integer)
+
+    logmarginal(hyperparams::Vector)=GPNT_logmarginal_CF(phi,y,exp(hyperparams[1]),seed); 
+    g=ForwardDiff.gradient(logmarginal)
+    function g!(hyperparams::Vector,storage::Vector)
+        grad=g(hyperparams)
+        for i=1:length(hyperparams)
+            storage[i]=grad[i]
+        end
+    end
+    l=optimize(logmarginal,g!,log([init_signal_var]),method=:cg,show_trace = true, extended_trace = true)
+	return exp(l.minimum)
+end
+
+
 
 #write RMSE to filename
 #=function SDexp(phitrain::Array,phitest::Array,ytrain::Array,ytest::Array,ytrainStd::Real,seed::Integer,sigma::Real,
