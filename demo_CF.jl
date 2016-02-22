@@ -66,9 +66,6 @@ end
 @everywhere MovieData = MovieData[:,[1,6:end]];
 @everywhere UserData = convert(Array{Float64,2},UserData)[:,2:end];
 @everywhere MovieData = convert(Array{Float64,2},MovieData)[:,3:end];  #first column is "unknown" genre, discard
-#@everywhere UserData=datawhitening(UserData);
-#@everywhere MovieData=datawhitening(MovieData);
-
 @everywhere ytrain = Rating[1:Ntrain,3];
 @everywhere ytest = Rating[Ntrain+1:Ntrain+Ntest,3];
 @everywhere ytrainMean=mean(ytrain);
@@ -76,7 +73,8 @@ end
 @everywhere ytrain=datawhitening(ytrain);
 @everywhere ytest = (ytest-ytrainMean)/ytrainStd;
 
-@everywhere n = 150; @everywhere M = 50
+@everywhere n = 150;
+@everywhere M = 50;
 @everywhere a,b=0.5,0.5;
 
 @everywhere phiUser = GPTinf.hash_feature(UserData,n,M,a,b);
@@ -93,27 +91,7 @@ end
 			phitest[:,2,i]=phiMovie[:,Rating[Ntrain+i,2]]
 		end
 
-
-
-#=
-@everywhere phiUser = [a*eye(size(UserData,1)), b*UserData']
-@everywhere phiMovie = [a*eye(size(MovieData,1)),b*MovieData']
-@everywhere sizeU,sizeM = size(phiUser,1),size(phiMovie,1)
-
-@everywhere maxsize=max(sizeU,sizeM)
-@everywhere phitrain=zeros(maxsize,2,Ntrain);
-@everywhere phitest=zeros(maxsize,2,Ntest);
-@everywhere   for i=1:Ntrain
-			phitrain[1:sizeU,1,i]=phiUser[:,Rating[i,1]]
-			phitrain[1:sizeM,2,i]=phiMovie[:,Rating[i,2]]
-		end
-
-@everywhere   for i=1:Ntest
-			phitest[1:sizeU,1,i]=phiUser[:,Rating[Ntrain+i,1]]
-			phitest[1:sizeM,2,i]=phiMovie[:,Rating[Ntrain+i,2]]
-		end
-=#
-#GPNT_hyperparameters(Xtrain,ytrain,n,0.5,0.5,0.5,seed)
+@everywhere param_seed=17;
 @everywhere burnin=0;
 @everywhere numiter=20;
 @everywhere Q=200;   
@@ -135,9 +113,6 @@ end
 	myt[it]=prod;
         it+=1;
         end
-
-## hyperparameters signal_var, M, a, b
-
 
 ### as a function of training data points
 
@@ -164,7 +139,7 @@ testRMSE = SharedArray(Float64,maxepoch*numbatches,myn); trainRMSE= SharedArray(
 		phitest[:,2,i]=phiMovie[:,Rating[end-Ntest+i,2]]
 	 end
         tic(); 
-        w_store,U_store=GPTinf.GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
+        w_store,U_store=GPTinf.GPTregression(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch,param_seed);
 	numbatches=int(ceil(Ntrain/m))
 	for epoch=1:maxepoch*numbatches
 		trainpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitrain)
@@ -194,7 +169,7 @@ epsvec=SharedArray(Float64,myn,2);timer=SharedArray(Float64,myn);
     i,j = myt[k]
     tic()
     epsw=float(string("1e-",i)); epsU=float(string("1e-",j));
-    w_store,U_store=GPTinf.GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
+    w_store,U_store=GPTinf.GPTregression(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch,param_seed);
    # testRMSE=Array(Float64,maxepoch*numbatches)
     numbatches=int(ceil(Ntrain/m))
     @sync @parallel for epoch=1:maxepoch*numbatches
@@ -240,7 +215,7 @@ testRMSE = SharedArray(Float64,maxepoch*numbatches,myn); testNMAE= SharedArray(F
 			phitest[:,1,i]=phiUser[:,Rating[Ntrain+i,1]]
 			phitest[:,2,i]=phiMovie[:,Rating[Ntrain+i,2]]
 	end
-    w_store,U_store=GPTinf.GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
+    w_store,U_store=GPTinf.GPTregression(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch,param_seed);
    # testRMSE=Array(Float64,maxepoch*numbatches)
     numbatches=int(ceil(Ntrain/m))
     @sync @parallel for epoch=1:maxepoch*numbatches
@@ -308,7 +283,7 @@ testRMSEgibbs = SharedArray(Float64,numiter,myn); trainRMSEgibbs = SharedArray(F
 		phitest[:,2,i]=phiMovie[:,Rating[Ntrain+i,2]]
 	 end
         tic(); 
-        w_store,U_store=GPTinf.GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
+        w_store,U_store=GPTinf.GPTregression(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch,param_seed);
 	numbatches=int(ceil(Ntrain/m))
 	for epoch=1:maxepoch*numbatches
 		trainpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitrain)
@@ -343,7 +318,7 @@ timer=SharedArray(Float64,myn)
          r = convert(Int,rvec[k])
    	 tic(); 
   	 I=samplenz(r,D,Q,seed);
-         w_store,U_store=GPTinf.GPT_SGLDERM(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch);
+         w_store,U_store=GPTinf.GPTregression(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch,param_seed);
 	numbatches=int(ceil(Ntrain/m))
 	for epoch=1:maxepoch*numbatches
 		trainpred=pred(w_store[:,epoch],U_store[:,:,:,epoch],I,phitrain)
