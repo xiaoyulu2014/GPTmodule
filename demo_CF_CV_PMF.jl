@@ -48,7 +48,7 @@ end
 @everywhere MovieData = readdlm("/homes/xlu/Downloads/ml-100k/u.item",'|');
 @everywhere Rating = readdlm("/homes/xlu/Downloads/ml-100k/u.data",Float64);
 
-@everywhere Ntrain = 60000;
+@everywhere Ntrain = 80000;
 @everywhere Ntest = 20000;
 @everywhere UserData[:,2] = bin_age(UserData[:,2])
 @everywhere UserData = convertdummy(convert(DataFrame,UserData),[:x2,:x3,:x4])[:,1:end-1];
@@ -64,115 +64,98 @@ end
 @everywhere ytest = (ytest-ytrainMean)/ytrainStd;
 @everywhere n = 500; 
 @everywhere M = 5;
-@everywhere burnin=0;
-@everywhere numiter=30;
+@everywhere burnin=10;
 @everywhere r = 8
 @everywhere Q=r;   
 @everywhere D = 2;
 @everywhere using Distributions
 @everywhere param_seed=17;
 @everywhere I=repmat(1:r,1,2);
-@everywhere m = 1000;
-@everywhere maxepoch = 20;
+@everywhere m = 100;
+@everywhere maxepoch = 100;
 
-@everywhere a1vec=[3,8,10];
-@everywhere a2vec=[3,8,10];
-@everywhere signal_varvec=[0.1,0.5];
-@everywhere epswvec=[0.001,0.0001];
-@everywhere epsUvec=[0.000001,0.0000001];
+@everywhere epsw=0.0
+@everywhere signal_varvec=[0.001,0.01];
+@everywhere var_uvec=[0.01,0.1];
+@everywhere epsUvec=[0.00001,0.0000001];
 @everywhere numbatches=int(ceil(maximum(Ntrain)/m));
-@everywhere myn=3*3*2*2*2
-@everywhere t=Iterators.product(a1vec,a2vec,signal_varvec,epswvec,epsUvec)
+@everywhere myn=2*2*2
+@everywhere t=Iterators.product(signal_varvec,var_uvec,epsUvec)
 @everywhere myt=Array(Any,myn);
 @everywhere it=1;
 @everywhere for prod in t
 	myt[it]=prod;
         it+=1;
         end
+#=
 ##cross validation
-
-testRMSE = SharedArray(Float64,maxepoch,myn); trainRMSE= SharedArray(Float64,maxepoch,myn);timer=SharedArray(Float64,myn);
-testRMSEgibbs = SharedArray(Float64,numiter,myn); trainRMSEgibbs = SharedArray(Float64,numiter,myn);timergibbs =SharedArray(Float64,myn)
-
+##signal_var=0.001;var_u=0.01; epsU=1.0e-7;minRMSE=0.9548802146942493;true;false
+testRMSE = SharedArray(Float64,maxepoch-burnin+1,myn); trainRMSE= SharedArray(Float64,maxepoch-burnin+1,myn);timer=SharedArray(Float64,myn);
 @sync @parallel for k=1:myn
-	a1,a2,signal_var,epsw,epsU=myt[k]
-	phiUser = a1*eye(size(UserData,1));
-	phiMovie = a2*eye(size(MovieData,1));
-	phiUser = vcat(phiUser,zeros(size(phiMovie,1)-size(phiUser,1),size(phiUser,2)));
-	phitrain=Array(Float64,size(phiUser,1),2,Ntrain);
-	phitest=Array(Float64,size(phiUser,1),2,Ntest);
+	signal_var,var_u,epsU=myt[k]
+	phiUser = eye(size(UserData,1));
+	phiMovie = eye(size(MovieData,1));
+	phiUtrain=Array(Float64,size(phiUser,1),Ntrain);phiVtrain=Array(Float64,size(phiMovie,1),Ntrain);
+	phiUtest=Array(Float64,size(phiUser,1),Ntest);phiVtest=Array(Float64,size(phiMovie,1),Ntest);
 	for i=1:Ntrain
-	    phitrain[:,1,i]=phiUser[:,Rating[i,1]]
-	    phitrain[:,2,i]=phiMovie[:,Rating[i,2]]
+	    phiUtrain[:,i]=phiUser[:,Rating[i,1]]
+	    phiVtrain[:,i]=phiMovie[:,Rating[i,2]]
 	end
 	 for i=1:Ntest
-		phitest[:,1,i]=phiUser[:,Rating[Ntrain+i,1]]
-		phitest[:,2,i]=phiMovie[:,Rating[Ntrain+i,2]]
+		phiUtest[:,i]=phiUser[:,Rating[Ntrain+i,1]]
+		phiVtest[:,i]=phiMovie[:,Rating[Ntrain+i,2]]
 	 end
 	tic(); 
-	w_store,U_store=GPTinf.GPTregression(phitrain, ytrain,signal_var, I, r, Q, m, epsw, epsU, burnin, maxepoch,param_seed,langevin=false,stiefel=false);
-	numbatches=int(ceil(Ntrain/m))
+	w_store,U_store,V_store=GPTinf.GPT_CF(phiUtrain, phiVtrain, ytrain,signal_var, var_u, r, m, epsw, epsU, maxepoch,param_seed,true,false);
+	numbatches=int(ceil(Ntrain/m));trainpred=zeros(Ntrain);testpred=zeros(Ntest)
 	#make predictions for every epoch
-	for epoch=1:maxepoch
-		traintmp=pred(w_store[:,epoch*numbatches],U_store[:,:,:,epoch*maxepoch],I,phitrain)
-		if epoch > burnin
-			trainpred = (trainpred + traintmp)/2
-		else 	trainpred = traintmp
-		end
-		trainRMSE[epoch,k]=ytrainStd*norm(ytrain-trainpred)/sqrt(Ntrain)
-		testtmp=pred(w_store[:,epoch*numbatches],U_store[:,:,:,epoch*numbatches],I,phitest)
-		if epoch > burnin
-			testpred = (trainpred + testtmp)/2
-		else 	testpred = traintmp
-		end
-		testRMSE[epoch,k]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+	for epoch=burnin:maxepoch
+		trainpred = (trainpred + GPTinf.pred_CF(w_store[:,epoch],U_store[:,:,epoch],V_store[:,:,epoch],phiUtrain,phiVtrain))/2
+		trainRMSE[epoch-burnin+1,k]=ytrainStd*norm(ytrain-trainpred)/sqrt(Ntrain)
+		testpred = (testpred + GPTinf.pred_CF(w_store[:,epoch],U_store[:,:,epoch],V_store[:,:,epoch],phiUtest,phiVtest))/2
+		testRMSE[epoch-burnin+1,k]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
 	end
 	timer[k] = toq(); 
-	println("a1=",a1,"; a2=",a2,";signal_var=",signal_var,"; epsw=",epsw, "; epsU=",epsU, ";minRMSE=",minimum(testRMSE[:,k]),";minepoch=",indmin(testRMSE[:,k]),
-	";timer=",timer[k]);
+	println(";signal_var=",signal_var,";var_u=",var_u,"; epsU=",epsU, ";minRMSE=",minimum(testRMSE[:,k]),";minepoch=",indmin(testRMSE[:,k]),";timer=",timer[k]);
 end
-#=
-@everywhere signal_varvec=[0.1,0.8,1.5];
-@everywhere a1vec=[0.5,1,5];
-@everywhere a2vec=[0.5,1,5];
-@everywhere numbatches=int(ceil(maximum(Ntrain)/m));
-@everywhere t1=Iterators.product(a1vec,a2vec,signal_varvec)
-@everywhere myt1=Array(Any,myn);@everywhere myn1=3*2*2
+=#
+
+@everywhere signal_varvec=[0.001,0.01,0.1];
+@everywhere var_uvec=[0.01,0.1,0.5];
+@everywhere myn1=3*3
+@everywhere t1=Iterators.product(signal_varvec,var_uvec)
+@everywhere myt1=Array(Any,myn1);
 @everywhere it=1;
 @everywhere for prod in t1
 	myt1[it]=prod;
         it+=1;
         end
+testRMSEgibbs = SharedArray(Float64,maxepoch-burnin+1,myn1); trainRMSEgibbs = SharedArray(Float64,maxepoch-burnin+1,myn1);timergibbs =SharedArray(Float64,myn1)
 @sync @parallel for k=1:myn1
-	a1,a2,signal_var=myt1[k]
-	phiUser = a1*eye(size(UserData,1));
-	phiMovie = a2*eye(size(MovieData,1));
-	phiUser = vcat(phiUser,zeros(size(phiMovie,1)-size(phiUser,1),size(phiUser,2)));
-	phitrain=Array(Float64,size(phiUser,1),2,Ntrain);
-	phitest=Array(Float64,size(phiUser,1),2,Ntest);	
-	phitrain=Array(Float64,size(phiUser,1),2,Ntrain);
-	phitest=Array(Float64,size(phiUser,1),2,Ntest);
+	signal_var,var_u=myt1[k];
+	phiUser = eye(size(UserData,1));
+	phiMovie = eye(size(MovieData,1));
+	phiUtrain=Array(Float64,size(phiUser,1),Ntrain);phiVtrain=Array(Float64,size(phiMovie,1),Ntrain);
+	phiUtest=Array(Float64,size(phiUser,1),Ntest);phiVtest=Array(Float64,size(phiMovie,1),Ntest);
 	for i=1:Ntrain
-	    phitrain[:,1,i]=phiUser[:,Rating[i,1]]
-	    phitrain[:,2,i]=phiMovie[:,Rating[i,2]]
+	    phiUtrain[:,i]=phiUser[:,Rating[i,1]]
+	    phiVtrain[:,i]=phiMovie[:,Rating[i,2]]
 	end
 	 for i=1:Ntest
-		phitest[:,1,i]=phiUser[:,Rating[Ntrain+i,1]]
-		phitest[:,2,i]=phiMovie[:,Rating[Ntrain+i,2]]
+		phiUtest[:,i]=phiUser[:,Rating[Ntrain+i,1]]
+		phiVtest[:,i]=phiMovie[:,Rating[Ntrain+i,2]]
 	 end
-	tic();
-	 wGibbs,UGibbs=GPTgibbs(phitrain,ytrain,sigma,I,r,Q,burnin,numiter);
-	 for epoch=1:numiter   ##average over samples
-	    trainpred=pred(wGibbs[:,epoch],UGibbs[:,:,:,epoch],I,phitrain)
-	    trainRMSEgibbs[epoch,k]=ytrainStd*norm(ytrain-trainpred)/sqrt(Ntrain)
-	    tmp=pred(wGibbs[:,epoch],UGibbs[:,:,:,epoch],I,phitest)
-	    if epoch > 10
-		testpred = (testpred + tmp)/2
-	    else testpred = tmp
-	    end
-	    testRMSEgibbs[epoch,k]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
+	 tic();
+	 wGibbs,UGibbs,VGibbs=GPTinf.GPT_CFgibbs(phiUtrain, phiVtrain,ytrain, signal_var, var_u, r, maxepoch);
+         trainpred=zeros(Ntrain);testpred=zeros(Ntest)
+	 for epoch=burnin:maxepoch   ##average over samples
+	        trainpred = (trainpred + GPTinf.pred_CF(wGibbs[:,epoch],UGibbs[:,:,epoch],VGibbs[:,:,epoch],phiUtrain,phiVtrain))/2
+		trainRMSEgibbs[epoch-burnin+1,k]=ytrainStd*norm(ytrain-trainpred)/sqrt(Ntrain)
+		testpred = (testpred + GPTinf.pred_CF(wGibbs[:,epoch],UGibbs[:,:,epoch],VGibbs[:,:,epoch],phiUtest,phiVtest))/2
+		testRMSEgibbs[epoch-burnin+1,k]=ytrainStd*norm(ytest-testpred)/sqrt(Ntest)
 	end
 	timergibbs[k]=toq(); 
-	println("a1=",a1,"; a2=",a2,";signal_var=",signal_var,";minRMSEgibbs=",minimum(testRMSEgibbs[:,k]),";minepoch=",indmin(testRMSEgibbs[:,k]),";timergibbs=",timergibbs[k]);
+	println(";signal_var=",signal_var,";var_u=",var_u,";minRMSEgibbs=",minimum(testRMSEgibbs[:,k]),";minepoch=",indmin(testRMSEgibbs[:,k]),";timergibbs=",timergibbs[k]);
 end
-=#
+
+

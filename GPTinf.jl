@@ -2,7 +2,7 @@ module GPTinf
 
 using Distributions,Optim,ForwardDiff
 
-export datawhitening,feature,samplenz,RMSE, GPTgibbs, pred, data_simulator, GPTHMC, GPT_w, GPT_SGLDERM_hyper,GPTregression,GPT_probit_SGD, GPT_SGLDERM_probit,GPNT_hyperparameters,featureNotensor,GPT_SGLDERM_probit_SEM,hash_feature,GPT_probit_SGD_hyper,GPT_probit_SGD_adam
+export datawhitening,feature,samplenz,RMSE, GPTgibbs, pred, data_simulator, GPTHMC, GPT_w, GPT_SGLDERM_hyper,GPTregression,GPT_probit_SGD, GPT_SGLDERM_probit,GPNT_hyperparameters,featureNotensor,GPT_SGLDERM_probit_SEM,hash_feature,GPT_probit_SGD_hyper,GPT_probit_SGD_adam,pred_CF,GPT_CF,GPT_CFgibbs
 
 
 function data_simulator(X::Array,n::Integer,r::Integer,Q::Integer,sigma::Real,length_scale::Real,sigma_RBF::Real,seed::Integer)
@@ -272,12 +272,12 @@ function GPTgibbs(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::Integer
     # maxepoch is the number of sweeps through whole dataset
 
     n,D,N=size(phi)
-    sigma_u = sqrt(1/r)
-    sigma_w = sqrt(r^D/Q)
+    sigma_u = 0.1 #sqrt(1/r)
+    sigma_w = 1 #sqrt(r^D/Q)
     # initialise w,U^(k)
     w_store=Array(Float64,Q,numiter)
     U_store=Array(Float64,n,r,D,numiter)
-    w=sigma_w*randn(Q)
+    w=ones(Q) #sigma_w*randn(Q)
     #println("w= ",w)
     U=Array(Float64,n,r,D)
     for k=1:D
@@ -288,15 +288,15 @@ function GPTgibbs(phi::Array,y::Array,sigma::Real,I::Array,r::Integer,Q::Integer
     for epoch=1:(burnin+numiter)
 
         # compute <phi^(k)(x_i),U^(k)_{.l}> for all k,l,batch and store in temp
-        temp=phidotU(U,phi)
+       # temp=phidotU(U,phi)
 
         # compute V st V[q,i]=prod_{k=1 to D}(temp[k,I[q,k],i])
-        V=computeV(temp,I)
+       # V=computeV(temp,I)
 
         #gibbs on w
-        invSigma_w = 1/(sigma^2) * V * V' + (1/sigma_w^2)*eye(Q)
-        Mu_w = \(invSigma_w,1/(sigma^2) *(V * y))
-        w[:] = \(chol(invSigma_w,:U),randn(Q)) + Mu_w
+      #  invSigma_w = 1/(sigma^2) * V * V' + (1/sigma_w^2)*eye(Q)
+      #  Mu_w = \(invSigma_w,1/(sigma^2) *(V * y))
+      #  w[:] = \(chol(invSigma_w,:U),randn(Q)) + Mu_w
 
         # compute U_phi[q,i,k]=expression in big brackets in (11)
 
@@ -883,20 +883,22 @@ function GPTregression(phi::Array, y::Array, signal_var::Real, I::Array, r::Inte
     n,D,N=size(phi)
     numbatches=int(ceil(N/m))
     sigma_w=1;
+    signal_u=0.01;
     
     # initialise w,U^(k)
     srand(param_seed);
     w_store=Array(Float64,Q,maxepoch*numbatches)
     U_store=Array(Float64,n,r,D,maxepoch*numbatches)
-    w=sigma_w*randn(Q)
-	
+    #w=sigma_w*randn(Q)
+    w=ones(r)
+ 
     if stiefel
 	U=Array(Float64,n,r,D)
 	for k=1:D
 	    Z=randn(r,n)
 	    U[:,:,k]=transpose(\(sqrtm(Z*Z'),Z)) #sample uniformly from V_{n,r}
 	end
-    else U=randn(n,r,D)/sqrt(n)
+    else U=randn(n,r,D) #/sqrt(n)
     end
 
     for epoch=1:(burnin+maxepoch)
@@ -921,7 +923,7 @@ function GPTregression(phi::Array, y::Array, signal_var::Real, I::Array, r::Inte
             fhat=computefhat(V,w)
 
             # now can compute gradw, the stochastic gradient of log post wrt w
-            gradw=(N/batch_size)*V*(y_batch-fhat)/signal_var-w/(sigma_w^2)
+            #gradw=(N/batch_size)*V*(y_batch-fhat)/signal_var-w/(sigma_w^2)
 
             # compute U_phi[q,i,k]=expression in big brackets in (11)
             U_phi=computeU_phi(V,temp,I)
@@ -934,15 +936,20 @@ function GPTregression(phi::Array, y::Array, signal_var::Real, I::Array, r::Inte
             
             # can now compute gradU where gradU[:,:,k]=stochastic gradient of log post wrt U^(k)
             gradU=Array(Float64,n,r,D)
-            for k=1:D
-                gradU[:,:,k]=reshape((N/batch_size)*Psi[:,:,k]*(y_batch-fhat)/signal_var,n,r)
-            end
+	    if stiefel
+		    for k=1:D
+		        gradU[:,:,k]=reshape((N/batch_size)*Psi[:,:,k]*(y_batch-fhat)/signal_var,n,r)
+		    end
+	    else  for k=1:D
+		        gradU[:,:,k]=reshape((N/batch_size)*Psi[:,:,k]*(y_batch-fhat)/signal_var,n,r)-U[:,:,k]/signal_u
+		    end
+	    end
 	    
             # update w
-	    if langevin
-		w+=epsw*gradw/2+sqrt(epsw)*randn(Q)
-	    else w+=epsw*gradw/2
-	    end
+	    #if langevin
+	#	w+=epsw*gradw/2+sqrt(epsw)*randn(Q)
+	   # else w+=epsw*gradw/2
+	   # end
 
             # update U
 	    if langevin
@@ -976,6 +983,132 @@ function GPTregression(phi::Array, y::Array, signal_var::Real, I::Array, r::Inte
         end
     end
     return w_store,U_store
+end
+
+
+function pred_CF(w::Array,U::Array,V::Array,phiU::Array,phiV::Array)
+    PhidotU=U'*phiU; PhidotV=V'*phiV ;fw=PhidotU.*PhidotV;
+    return fw'*w
+end
+
+function GPT_CF(phiU::Array, phiV::Array,y::Array, signal_var::Real,var_u::Real, r::Integer, m::Integer, epsw::Real, epsU::Real, maxepoch::Integer,param_seed::Integer,langevin::Bool,stiefel::Bool)
+ 
+    n1,N=size(phiU); n2=size(phiV,1)
+    numbatches=int(ceil(N/m))
+    var_w=1;
+    
+    # initialise w,U^(k)
+    srand(param_seed);
+    w_store=Array(Float64,r,maxepoch)
+    U_store=Array(Float64,n1,r,maxepoch)
+    V_store=Array(Float64,n2,r,maxepoch)
+    w=sqrt(var_w)*randn(r)
+    #w=ones(r)
+ 
+    if stiefel
+	Z1=randn(r,n1);	Z2=randn(r,n2)
+	U=transpose(\(sqrtm(Z1*Z1'),Z1))
+	V=transpose(\(sqrtm(Z2*Z2'),Z2))
+    else U=sqrt(var_u)*randn(n1,r);V=sqrt(var_u)*randn(n2,r)
+    end
+
+    for epoch=1:maxepoch
+        #randomly permute training data and divide into mini_batches of size m
+        perm=randperm(N)
+        phiU=phiU[:,perm]; phiV=phiV[:,perm];y=y[perm];
+
+        # run SGLD on w and SGLDERM on U
+        for batch=1:numbatches
+            # random samples for the stochastic gradient
+            idx=(m*(batch-1)+1):min(m*batch,N)
+            phi_batchU=phiU[:,idx];phi_batchV=phiV[:,idx]; y_batch=y[idx];
+            batch_size=length(idx) 
+
+	    PhidotU=U'*phi_batchU; PhidotV=V'*phi_batchV ;fw=PhidotU.*PhidotV;
+	    fhat=fw'*w;
+            # now can compute gradw, the stochastic gradient of log post wrt w
+            gradw=(N/batch_size)*fw*(y_batch-fhat)/signal_var-w/var_w
+
+          
+	    gradU=Array(Float64,n1,r); gradV=Array(Float64,n2,r);PsiU=Array(Float64,n1*r,m);PsiV=Array(Float64,n2*r,m);
+	    for i=1:m
+		PsiU[:,i]=kron(w.*PhidotV[:,i],phi_batchU[:,i])
+		PsiV[:,i]=kron(w.*PhidotU[:,i],phi_batchV[:,i])
+	    end
+	    if stiefel
+		gradU=reshape((N/batch_size)*PsiU*((y_batch-fhat)/signal_var),n1,r)
+		gradV=reshape((N/batch_size)*PsiV*((y_batch-fhat)/signal_var),n2,r)
+	    else 
+		gradU=reshape((N/batch_size)*PsiU*(y_batch-fhat)/signal_var,n1,r)-U/var_u
+		gradV=reshape((N/batch_size)*PsiV*(y_batch-fhat)/signal_var,n2,r)-V/var_u
+	    end
+	    
+            # update w
+	    if langevin
+		w+=epsw*gradw/2+sqrt(epsw)*randn(r)
+	    else w+=epsw*gradw/2
+	    end
+
+            # update U
+	    if langevin
+		if stiefel
+		   momU=proj(U,sqrt(epsU)*gradU/2+randn(n1,r));	momV=proj(V,sqrt(epsU)*gradV/2+randn(n2,r))
+		   U=geod(U,momU,sqrt(epsU)); V=geod(V,momV,sqrt(epsU));
+		else U+=epsU*gradU/2+sqrt(epsU)*randn(n1,r);V+=epsU*gradV/2+sqrt(epsU)*randn(n2,r)
+		end
+	    else U+=epsU*gradU/2;V+=epsU*gradV/2
+	    end
+
+	        w_store[:,epoch]=w
+	        U_store[:,:,epoch]=U
+	        V_store[:,:,epoch]=V
+	end
+    end
+    return w_store,U_store,V_store
+end
+
+
+function GPT_CFgibbs(phiU::Array, phiV::Array,y::Array, signal_var::Real, var_u::Real, var_w::Real, r::Integer, maxepoch::Integer)
+ 
+    n1,N=size(phiU); n2=size(phiV,1)
+    
+    # initialise w,U^(k)
+    w_store=Array(Float64,r,maxepoch)
+    U_store=Array(Float64,n1,r,maxepoch)
+    V_store=Array(Float64,n2,r,maxepoch)
+    w=sqrt(var_w)*randn(r)
+   # w=ones(r)
+    U=sqrt(var_u)*randn(n1,r);
+    V=sqrt(var_u)*randn(n2,r)
+
+
+    for epoch=1:maxepoch
+	    PhidotU=U'*phiU; PhidotV=V'*phiV ;fw=PhidotU.*PhidotV;
+	    fhat=fw'*w;
+ 
+            #gibbs on w
+            invSigma_w = 1/(signal_var) * fw * fw' + (1/var_w)*eye(r)
+            Mu_w = \(invSigma_w,1/(var_w) *(fw * y))
+            w[:] = \(chol(invSigma_w,:U),randn(r)) + Mu_w
+    
+	    PsiU=Array(Float64,n1*r,N);PsiV=Array(Float64,n2*r,N);
+	    for i=1:N
+		PsiU[:,i]=kron(w.*PhidotV[:,i],phiU[:,i])
+		PsiV[:,i]=kron(w.*PhidotU[:,i],phiV[:,i])
+	    end
+
+	    invSigma_U = PsiU * PsiU'/signal_var + (1/var_u) * eye(n1*r)	
+	    invSigma_V = PsiV * PsiV'/signal_var + (1/var_u) * eye(n2*r)
+            Mu_U = \(invSigma_U, (PsiU * y) / signal_var)
+            Mu_V = \(invSigma_V, (PsiV * y) / signal_var)
+            U= reshape(\(chol(invSigma_U,:U),randn(n1*r)) + Mu_U,n1,r)	
+            V= reshape(\(chol(invSigma_V,:U),randn(n2*r)) + Mu_V,n2,r)			
+ 
+	         w_store[:,epoch]=w
+	         U_store[:,:,epoch]=U
+	         V_store[:,:,epoch]=V
+    end
+    return w_store,U_store,V_store
 end
 
 
