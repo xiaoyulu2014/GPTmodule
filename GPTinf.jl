@@ -1002,8 +1002,8 @@ function GPT_CF(phiU::Array, phiV::Array,y::Array, signal_var::Real,var_u::Real,
     w_store=Array(Float64,r,maxepoch)
     U_store=Array(Float64,n1,r,maxepoch)
     V_store=Array(Float64,n2,r,maxepoch)
-    w=sqrt(var_w)*randn(r)
-    #w=ones(r)
+    #w=sqrt(var_w)*randn(r)
+    w=ones(r)
  
     if stiefel
 	Z1=randn(r,n1);	Z2=randn(r,n2)
@@ -1027,7 +1027,7 @@ function GPT_CF(phiU::Array, phiV::Array,y::Array, signal_var::Real,var_u::Real,
 	    PhidotU=U'*phi_batchU; PhidotV=V'*phi_batchV ;fw=PhidotU.*PhidotV;
 	    fhat=fw'*w;
             # now can compute gradw, the stochastic gradient of log post wrt w
-            gradw=(N/batch_size)*fw*(y_batch-fhat)/signal_var-w/var_w
+            #gradw=(N/batch_size)*fw*(y_batch-fhat)/signal_var-w/var_w
 
           
 	    gradU=Array(Float64,n1,r); gradV=Array(Float64,n2,r);PsiU=Array(Float64,n1*r,m);PsiV=Array(Float64,n2*r,m);
@@ -1044,10 +1044,10 @@ function GPT_CF(phiU::Array, phiV::Array,y::Array, signal_var::Real,var_u::Real,
 	    end
 	    
             # update w
-	    if langevin
+	  #=  if langevin
 		w+=epsw*gradw/2+sqrt(epsw)*randn(r)
 	    else w+=epsw*gradw/2
-	    end
+	    end=#
 
             # update U
 	    if langevin
@@ -1058,11 +1058,10 @@ function GPT_CF(phiU::Array, phiV::Array,y::Array, signal_var::Real,var_u::Real,
 		end
 	    else U+=epsU*gradU/2;V+=epsU*gradV/2
 	    end
-
+	end
 	        w_store[:,epoch]=w
 	        U_store[:,:,epoch]=U
 	        V_store[:,:,epoch]=V
-	end
     end
     return w_store,U_store,V_store
 end
