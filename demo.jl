@@ -3,7 +3,7 @@
 @everywhere using Iterators
 using PyPlot
 
-@everywhere data=DataFrames.readtable("Folds5x2_pp.csv", header = true);
+@everywhere data=DataFrames.readtable("Downloads/CCPP/Folds5x2_pp.csv", header = true);
 @everywhere data = convert(Array,data);
 @everywhere N=size(data,1);
 @everywhere D=4;
